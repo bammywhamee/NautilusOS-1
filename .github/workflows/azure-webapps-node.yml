@@ -5,7 +5,7 @@
 # ----------------------------
 
 # Variables
-REPO_URL="https://github.com/bammywhamee/NautilusOS-1.git"
+REPO_URL="https://bammywhamee.github.io/NautilusOS-1/"
 BRANCH="main"
 FOLDER="NautilusOS-OneFile"
 
