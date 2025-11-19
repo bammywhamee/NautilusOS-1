@@ -1,0 +1,8 @@
+# Stage changes
+git add .
+
+# Commit
+git commit -m "Deploy NautilusOS-OneFile to GitHub Pages"
+
+# Push to main branch
+git push origin main
