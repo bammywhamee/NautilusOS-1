@@ -1,416 +1,7 @@
-class db {
-    constructor(dbName, storeName) {
-        this.dbName = dbName;
-        this.storeName = storeName;
-        this.db = null;
-    }
-async init() {
-    if (this.db) {
-        return this;
-    }
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(this.dbName, 1);
-
-        request.onerror = (event) => {
-            console.error(`Database error: ${event.target.error}`);
-            reject(`Database error: ${event.target.error}`);
-        };
-
-        request.onsuccess = (event) => {
-            this.db = event.target.result;
-            this.db.onversionchange = () => {
-                this.db.close();
-                alert("Database is outdated, please reload the page.");
-            };
-            console.log("Database opened successfully.");
-            resolve(this);
-        };
-
-        request.onupgradeneeded = (event) => {
-            const db = event.target.result;
-            let objectStore;
-            if (!db.objectStoreNames.contains(this.storeName)) {
-                objectStore = db.createObjectStore(this.storeName, { keyPath: "id", autoIncrement: true });
-            } else {
-                objectStore = event.target.transaction.objectStore(this.storeName);
-            }   
-};
-});
-}
-async add(item) {
-    if (!this.db) {
-        throw new Error("Database not initialized. Call init() first.");
-    }
-    return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction([this.storeName], 'readwrite');
-        const objectStore = transaction.objectStore(this.storeName);
-        const addRequest = objectStore.add(item);
-
-        transaction.oncomplete = () => {
-            resolve(addRequest.result); // The new key
-        };
-        transaction.onerror = (event) => {
-            reject(`Error adding item: ${event.target.error}`);
-        };
-    });
-}
-
-async get(id) {
-    if (!this.db) {
-        throw new Error("Database not initialized. Call init() first.");
-    }
-    return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction([this.storeName], 'readonly');
-        const objectStore = transaction.objectStore(this.storeName);
-        const getRequest = objectStore.get(id);
-
-        getRequest.onsuccess = (event) => {
-            resolve(event.target.result);
-        };
-        getRequest.onerror = (event) => {
-            reject(`Error getting item with ID ${id}: ${event.target.error}`);
-        };
-    });
-}
-
-async update(item) {
-    if (!this.db) {
-        throw new Error("Database not initialized. Call init() first.");
-    }
-    return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction([this.storeName], "readwrite");
-        const objectStore = transaction.objectStore(this.storeName);
-        const putRequest = objectStore.put(item);
-
-        transaction.oncomplete = () => {
-            resolve(`Data with key '${item.id}' updated successfully.`);
-        };
-        transaction.onerror = (event) => {
-            reject(`Error updating data: ${event.target.error}`);
-        };
-    });
-}
-
-async delete(id) {
-    if (!this.db) {
-        throw new Error("Database not initialized. Call init() first.");
-    }
-    return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction([this.storeName], "readwrite");
-        const objectStore = transaction.objectStore(this.storeName);
-        const deleteRequest = objectStore.delete(id);
-
-        transaction.oncomplete = () => {
-            resolve(`Data with ID ${id} deleted successfully.`);
-        };
-        transaction.onerror = (event) => {
-            reject(`Error deleting data: ${event.target.error}`);
-        };
-    });
-}
-
-async getAll() {
-    if (!this.db) {
-        throw new Error("Database not initialized. Call init() first.");
-    }
-    return new Promise((resolve, reject) => {
-        const transaction = this.db.transaction([this.storeName], 'readonly');
-        const objectStore = transaction.objectStore(this.storeName);
-        const getAllRequest = objectStore.getAll();
-
-        getAllRequest.onsuccess = (event) => {
-            resolve(event.target.result);
-        };
-        getAllRequest.onerror = (event) => {
-            reject(`Error fetching all items: ${event.target.error}`);
-        };
-    });
-}
-
-close() {
-  if (this.db) {
-    this.db.close();
-    this.db = null;
-  }
-}
-
-async deleteDB() {
-    return new Promise((resolve, reject) => {
-        this.close(); 
-
-        const deleteRequest = window.indexedDB.deleteDatabase(this.dbName);
-
-        deleteRequest.onsuccess = () => {
-            console.log(`Database '${this.dbName}' deleted successfully.`);
-            resolve();
-        };
-        deleteRequest.onerror = (event) => {
-            console.error(`Error deleting database '${this.dbName}'.`, event.target.error);
-            reject(`Error deleting database: ${event.target.error}`);
-        };
-        deleteRequest.onblocked = (event) => {
-            console.warn(`Database '${this.dbName}' deletion is blocked. Close other connections.`);
-            reject(`Database deletion blocked.`);
-        };
-    });
-}
-}
-class encryption {
-    static #arrayBufferToBase64(buffer) {
-        let binary = '';
-        const bytes = new Uint8Array(buffer);
-        const len = bytes.byteLength;
-        for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(bytes[i]);
-        }
-        return window.btoa(binary);
-    }
-    static #base64ToArrayBuffer(base64) {
-        const binary_string = window.atob(base64);
-        const len = binary_string.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-            bytes[i] = binary_string.charCodeAt(i);
-        }
-        return bytes.buffer;
-    }
-    static async encrypt(plainText) {
-        try {
-            const key = await window.crypto.subtle.generateKey(
-                {
-                    name: "AES-GCM",
-                    length: 256,
-                },
-                true,
-                ["encrypt", "decrypt"]
-            );
-            const iv = window.crypto.getRandomValues(new Uint8Array(12));
-            const encodedData = new TextEncoder().encode(JSON.stringify(plainText));
-            const encryptedBuffer = await window.crypto.subtle.encrypt(
-                {
-                    name: "AES-GCM",
-                    iv: iv,
-                },
-                key,
-                encodedData
-            );
-            const keyJwk = await window.crypto.subtle.exportKey("jwk", key);
-            const packet = {
-                jwk: keyJwk,
-                iv: this.#arrayBufferToBase64(iv),
-                data: this.#arrayBufferToBase64(encryptedBuffer)
-            };
-            const packetString = JSON.stringify(packet);
-            return window.btoa(packetString);
-        } catch (error) {
-            console.error("Encryption failed:", error);
-            throw error;
-        }
-    }
-    static async decrypt(packetB64) {
-        try {
-            const packetString = window.atob(packetB64);
-            const packet = JSON.parse(packetString);
-            const key = await window.crypto.subtle.importKey(
-                "jwk",
-                packet.jwk,
-                {
-                    name: "AES-GCM",
-                },
-                true,
-                ["encrypt", "decrypt"]
-            );
-            const iv = this.#base64ToArrayBuffer(packet.iv);
-            const encryptedBuffer = this.#base64ToArrayBuffer(packet.data);
-            const decryptedBuffer = await window.crypto.subtle.decrypt(
-                {
-                    name: "AES-GCM",
-                    iv: iv,
-                },
-                key,
-                encryptedBuffer
-            );
-            return JSON.parse(new TextDecoder().decode(decryptedBuffer));
-        } catch (error) {
-            console.error("Decryption failed:", error);
-            throw error;
-        }
-    }
-}
-const idb = new db("asdfsdff","sdffjdk");
 let windows = {};
 let zIndexCounter = 100;
 let currentUsername = localStorage.getItem("nautilusOS_username") || "User";
 let focusedWindow = null;
-
-function removeIdRecursively(obj) {
-    if (typeof obj !== 'object' || obj === null) {
-        return; 
-    }
-    const keys = Object.keys(obj);
-
-    for (const key of keys) {
-        if (key === 'id') {
-            delete obj[key];
-        } else {
-            removeIdRecursively(obj[key]);
-        }
-    }
-}
-
-function compressFS(fs) {
-    const rootPrimitives = {};
-    const subDirectories = {};
-    for (const key in fs) {
-        const value = fs[key];
-        if (typeof value === 'object' && value !== null) {
-            subDirectories[key] = value;
-        } else {
-            rootPrimitives[key] = value;
-        }
-    }
-
-    const allKeysPostOrder = [];
-    const keyRelationships = new Map();
-
-    const isTerminal = (value) => {
-        if (typeof value !== 'object' || value === null) return false;
-        for (const key in value) {
-            if (typeof value[key] === 'object' && value[key] !== null) return false;
-        }
-        return true;
-    };
-
-    function discover(obj) {
-        for (const key in obj) {
-            const value = obj[key];
-            if (typeof value === 'object' && value !== null) {
-                if (Object.keys(value).length === 0) {
-                    keyRelationships.set(key, { type: 'container', children: [] });
-                } else if (isTerminal(value)) {
-                    keyRelationships.set(key, { type: 'terminal', value: value });
-                } else {
-                    discover(value);
-                    keyRelationships.set(key, { type: 'container', children: Object.keys(value) });
-                }
-            }
-        }
-        allKeysPostOrder.push(...Object.keys(obj));
-    }
-    discover(subDirectories);
-
-    const uniqueTerminalValues = [];
-    const seenValues = new Set();
-    const uniqueKeys = [...new Set(allKeysPostOrder)];
-    if (Object.keys(rootPrimitives).length > 0) {
-        uniqueTerminalValues.push(rootPrimitives);
-        seenValues.add(JSON.stringify(rootPrimitives));
-    }
-
-    for (const key of uniqueKeys) {
-        const data = keyRelationships.get(key);
-        if (data && data.type === 'terminal') {
-            const valueString = JSON.stringify(data.value);
-            if (!seenValues.has(valueString)) {
-                uniqueTerminalValues.push(data.value);
-                seenValues.add(valueString);
-            }
-        }
-    }
-
-    const finalMaps = [];
-    const keyToIndexMap = new Map();
-
-    for (const key of Object.keys(subDirectories).concat(uniqueKeys)) {
-        if (keyToIndexMap.has(key)) continue;
-        const data = keyRelationships.get(key);
-        if (!data) continue;
-
-        let mapObject;
-        let targetIndex;
-
-        if (data.type === 'terminal') {
-            const valueString = JSON.stringify(data.value);
-            targetIndex = uniqueTerminalValues.findIndex(v => JSON.stringify(v) === valueString);
-            mapObject = { [key]: targetIndex };
-        } else if (data.type === 'container') {
-            if (data.children.length === 0) {
-                mapObject = { [key]: null };
-            } else {
-                const firstChildKey = data.children[0];
-                targetIndex = keyToIndexMap.get(firstChildKey);
-                mapObject = { [key]: targetIndex };
-            }
-        }
-
-        if (mapObject) {
-            finalMaps.push(mapObject);
-            const finalIndexOfThisMap = uniqueTerminalValues.length + finalMaps.length -1;
-            keyToIndexMap.set(key, finalIndexOfThisMap);
-        }
-    }
-    
-    return [...uniqueTerminalValues, ...finalMaps];
-}
-
-function decompressFS(transformedArray) {
-    const values = [];
-    const maps = [];
-    for (const item of transformedArray) {
-        delete item.id;
-        const keys = Object.keys(item);
-        const firstValue = item[keys[0]];
-        if (keys.length === 1 && (typeof firstValue === 'number' || firstValue === null)) {
-            maps.push(item);
-        } else {
-            values.push(item);
-        }
-    }
-
-    const builtObjects = {};
-    const allChildKeys = new Set();
-    for (const map of maps) {
-        const key = Object.keys(map)[0];
-        const index = map[key];
-        let resolvedValue;
-
-        if (index === null) {
-            resolvedValue = {};
-        } else if (index < values.length) {
-            resolvedValue = values[index];
-        } else {
-            const childMap = maps[index - values.length];
-            const childKey = Object.keys(childMap)[0];
-            allChildKeys.add(childKey);
-            const childObject = builtObjects[childKey];
-            resolvedValue = { [childKey]: childObject };
-        }
-        builtObjects[key] = resolvedValue;
-    }
-
-    const finalDirs = {};
-    for (const key in builtObjects) {
-        if (!allChildKeys.has(key)) {
-            finalDirs[key] = builtObjects[key];
-        }
-    }
-    const rootPrimitives = {};
-    const referencedValueIndices = new Set();
-    maps.forEach(map => {
-        const index = Object.values(map)[0];
-        if (index !== null) {
-            referencedValueIndices.add(index);
-        }
-    });
-
-    for (let i = 0; i < values.length; i++) {
-        if (!referencedValueIndices.has(i)) {
-            Object.assign(rootPrimitives, values[i]);
-        }
-    }
-
-    return { ...rootPrimitives, ...finalDirs };
-}
 let fileSystem = {
   Photos: {},
   TextEditor: {
@@ -418,27 +9,6 @@ let fileSystem = {
       "This is an example text file.\n\nYou can edit this file using the Text Editor app.\n\nTry creating your own files by:\n1. Opening the Text Editor\n2. Writing your content\n3. Clicking Save As and entering a filename\n\nHave fun exploring NautilusOS!",
   },
 };
-async function saveFS(fs){
-    const l = compressFS(fs);
-    const tx = idb.db.transaction(idb.storeName, 'readwrite');
-    await tx.objectStore(idb.storeName).clear();
-
-    for(let i = 0; i < l.length; i++){
-        const itemToSave = { ...l[i], id: i };
-        await idb.add(itemToSave);
-    }
-}
-
-(async () => {
-    await idb.init();
-    let list = await idb.getAll();
-    window.addEventListener("Login Success", function() {
-    showToast("Files Loaded", "fa-check-circle");
-    },{once:true});
-    list = list.length==0? compressFS(fileSystem):list;
-    fileSystem = decompressFS(list);
-    await saveFS(fileSystem);
-})()
 let currentPath = [];
 let currentFile = null;
 let settings = {
@@ -455,138 +25,6 @@ let snapKeyCapture = null;
 let snapNewLayoutKeybind = "";
 let snapNewLayoutInput = null;
 
-// ========== ACCOUNT MANAGEMENT SYSTEM ==========
-
-// Account data structure
-class UserAccount {
-  constructor(username, password, role = "standard", isPasswordless = false) {
-    this.username = username;
-    this.password = password; // Hashed
-    this.role = role; // "superuser" or "standard"
-    this.isPasswordless = isPasswordless;
-    this.createdAt = Date.now();
-    this.allowedApps = []; // Empty means all apps allowed
-    this.customAvatar = null;
-  }
-}
-
-// Get all accounts from localStorage
-function getAllAccounts() {
-  const accountsData = localStorage.getItem("nautilusOS_accounts");
-  if (!accountsData) {
-    return [];
-  }
-  try {
-    return JSON.parse(accountsData);
-  } catch (e) {
-    console.error("Error parsing accounts:", e);
-    return [];
-  }
-}
-
-// Save all accounts to localStorage
-function saveAllAccounts(accounts) {
-  localStorage.setItem("nautilusOS_accounts", JSON.stringify(accounts));
-}
-
-// Get account by username
-function getAccountByUsername(username) {
-  const accounts = getAllAccounts();
-  return accounts.find(acc => acc.username === username);
-}
-
-// Create new account
-function createAccount(username, password, role = "standard", isPasswordless = false) {
-  const accounts = getAllAccounts();
-  
-  // Check if username already exists
-  if (accounts.find(acc => acc.username === username)) {
-    return { success: false, message: "Username already exists" };
-  }
-  
-  const hashedPassword = isPasswordless ? "" : hashPassword(password);
-  const newAccount = new UserAccount(username, hashedPassword, role, isPasswordless);
-  accounts.push(newAccount);
-  saveAllAccounts(accounts);
-  
-  return { success: true, message: "Account created successfully" };
-}
-
-// Update account
-function updateAccount(username, updates) {
-  const accounts = getAllAccounts();
-  const index = accounts.findIndex(acc => acc.username === username);
-  
-  if (index === -1) {
-    return { success: false, message: "Account not found" };
-  }
-  
-  // Merge updates
-  accounts[index] = { ...accounts[index], ...updates };
-  saveAllAccounts(accounts);
-  
-  return { success: true, message: "Account updated successfully" };
-}
-
-// Delete account
-function deleteAccount(username) {
-  const accounts = getAllAccounts();
-  const filtered = accounts.filter(acc => acc.username !== username);
-  
-  if (filtered.length === accounts.length) {
-    return { success: false, message: "Account not found" };
-  }
-  
-  saveAllAccounts(filtered);
-  return { success: true, message: "Account deleted successfully" };
-}
-
-// Check if user has permission to use an app
-function hasAppPermission(appName) {
-  if (!currentUserAccount) return true; // Default allow if no account system
-  
-  // Superusers can access everything
-  if (currentUserAccount.role === "superuser") return true;
-  
-  // If allowedApps is empty, all apps are allowed
-  if (!currentUserAccount.allowedApps || currentUserAccount.allowedApps.length === 0) {
-    return true;
-  }
-  
-  // Check if app is in allowed list
-  return currentUserAccount.allowedApps.includes(appName);
-}
-
-// Check if current user is superuser
-function isSuperUser() {
-  return currentUserAccount && currentUserAccount.role === "superuser";
-}
-
-// Migrate old single-user system to new multi-user system
-function migrateToMultiUserSystem() {
-  const accounts = getAllAccounts();
-  
-  // If accounts already exist, no need to migrate
-  if (accounts.length > 0) return;
-  
-  // Check if old system has a user
-  const oldUsername = localStorage.getItem("nautilusOS_username");
-  const oldPassword = localStorage.getItem("nautilusOS_password");
-  const oldIsPasswordless = localStorage.getItem("nautilusOS_isPasswordless") === "true";
-  
-  if (oldUsername) {
-    // Create account from old system as superuser
-    const newAccount = new UserAccount(
-      oldUsername,
-      oldPassword || "",
-      "superuser",
-      oldIsPasswordless
-    );
-    saveAllAccounts([newAccount]);
-    console.log("Migrated to multi-user system");
-  }
-}
-
 let loginStartTime = localStorage.getItem("nautilusOS_bootTime");
 if (!loginStartTime) {
   loginStartTime = Date.now();
@@ -596,30 +34,22 @@ if (!loginStartTime) {
 }
 
 let appliedThemeName = null;
-let hasShownFileProtocolToast = false;
 
-function checkFileProtocol(title = null) {
-  if (window.location.protocol === "file:") {
-    const shouldShowToast = title && (
-      title.toLowerCase().includes("browser") ||
-      title === "Visual Studio Code"
-    );
-    if (shouldShowToast && !hasShownFileProtocolToast) {
-      showToast("This feature doesn't work on file:// protocol. Please run NautilusOS from a web server.", "fa-exclamation-triangle");
-      hasShownFileProtocolToast = true;
-    }
-    return false;
-  }
-  return true;
+function checkFileProtocol() {
+   if (window.location.protocol === "file:") {
+     showToast("This feature doesn't work on file:// protocol. Please run NautilusOS from a web server.", "fa-exclamation-triangle");
+     return false;
+   }
+   return true;
 }
 
 function showToast(message, icon = "fa-info-circle") {
-  console.log(`[TOAST LOG] ${new Date().toISOString()}: ${message} (icon: ${icon})`);
-  const container = document.getElementById("toastContainer");
-  const toast = document.createElement("div");
-  toast.className = "toast";
+    console.log(`[TOAST LOG] ${new Date().toISOString()}: ${message} (icon: ${icon})`);
+    const container = document.getElementById("toastContainer");
+    const toast = document.createElement("div");
+    toast.className = "toast";
 
-  toast.innerHTML = `
+    toast.innerHTML = `
                <i class="fas ${icon} toast-icon"></i>
                <div class="toast-message">${message}</div>
                <div class="toast-close" onclick="closeToast(this)">
@@ -627,13 +57,13 @@ function showToast(message, icon = "fa-info-circle") {
                </div>
            `;
 
-  container.appendChild(toast);
+    container.appendChild(toast);
 
-  setTimeout(() => {
-    closeToast(toast.querySelector(".toast-close"));
-  }, 4000);
+    setTimeout(() => {
+      closeToast(toast.querySelector(".toast-close"));
+    }, 4000);
 
-  addNotificationToHistory(message, icon);
+    addNotificationToHistory(message, icon);
 }
 function closeToast(btn) {
   const toast = btn.closest(".toast");
@@ -664,7 +94,6 @@ const appMetadata = {
   browser: { name: "Nautilus Browser", icon: "fa-globe", preinstalled: true },
   cloaking: { name: "Cloaking", icon: "fa-mask", preinstalled: true },
   achievements: { name: "Achievements", icon: "fa-trophy", preinstalled: true },
-  python: { name: "Python Interpreter", icon: "fa-code", preinstalled: true },
   "startup-apps": {
     name: "Startup Apps",
     icon: "fa-rocket",
@@ -679,21 +108,6 @@ const appMetadata = {
     name: "Snap Manager",
     icon: "fa-border-all",
     preinstalled: false,
-  },
-  "v86-emulator": {
-    name: "V86 Emulator",
-    icon: "fa-microchip",
-    preinstalled: false,
-  },
-  "ai-snake": {
-    name: "AI Snake Learning",
-    icon: "fa-brain",
-    preinstalled: true,
-  },
-  "nautilus-ai": {
-    name: "Nautilus AI Assistant",
-    icon: "fa-robot",
-    preinstalled: true,
   },
 };
 
@@ -1138,8 +552,8 @@ function renderSnapManager() {
                 <div class="snap-layout-header">
                     <div class="snap-layout-title">
                         <input type="text" value="${escapeHtml(
-        layout.name
-      )}" onblur="handleSnapLayoutField('${layoutId}', 'name', this.value)">
+                          layout.name
+                        )}" onblur="handleSnapLayoutField('${layoutId}', 'name', this.value)">
                         <span>${getSnapTriggerLabel(layout.trigger)}</span>
                     </div>
                     <button class="snap-remove-btn" onclick="removeSnapLayout('${layoutId}')" ${removeDisabled}>
@@ -1937,8 +1351,9 @@ function startLoginClock() {
       "November",
       "December",
     ];
-    const dateStr = `${days[now.getDay()]}, ${months[now.getMonth()]
-      } ${now.getDate()}`;
+    const dateStr = `${days[now.getDay()]}, ${
+      months[now.getMonth()]
+    } ${now.getDate()}`;
     document.getElementById("loginDate").textContent = dateStr;
   }
   updateLoginClock();
@@ -1952,67 +1367,36 @@ function login() {
   const username = document.getElementById("username").value;
   const password = document.getElementById("password").value;
 
-  // Migrate old system if needed
-  migrateToMultiUserSystem();
-  
-  // Get account from new multi-user system
-  const account = getAccountByUsername(username);
-  
-  if (!account) {
-    // Fallback to old system for backwards compatibility
-    const savedUsername = localStorage.getItem("nautilusOS_username");
-    const savedPassword = localStorage.getItem("nautilusOS_password");
-    const isPasswordless = localStorage.getItem("nautilusOS_isPasswordless") === "true";
+  const savedUsername = localStorage.getItem("nautilusOS_username");
+  const savedPassword = localStorage.getItem("nautilusOS_password");
+  const isPasswordless =
+    localStorage.getItem("nautilusOS_isPasswordless") === "true";
 
-    if (!username) {
-      showToast("Please enter username", "fa-exclamation-circle");
-      return;
-    }
-
-    if (username !== savedUsername) {
-      showToast("Invalid username", "fa-exclamation-circle");
-      return;
-    }
-
-    if (!isPasswordless) {
-      if (!password) {
-        showToast("Please enter password", "fa-exclamation-circle");
-        return;
-      }
-
-      const hashedPassword = hashPassword(password);
-      if (hashedPassword !== savedPassword) {
-        showToast("Invalid password", "fa-exclamation-circle");
-        return;
-      }
-    }
-    
-    currentUsername = username;
-    currentUserAccount = null; // Old system doesn't use account objects
-  } else {
-    // New multi-user system
-    if (!username) {
-      showToast("Please enter username", "fa-exclamation-circle");
-      return;
-    }
-
-    if (!account.isPasswordless) {
-      if (!password) {
-        showToast("Please enter password", "fa-exclamation-circle");
-        return;
-      }
-
-      const hashedPassword = hashPassword(password);
-      if (hashedPassword !== account.password) {
-        showToast("Invalid password", "fa-exclamation-circle");
-        return;
-      }
-    }
-    
-    currentUsername = username;
-    currentUserAccount = account;
+  if (!username) {
+    showToast("Please enter username", "fa-exclamation-circle");
+    return;
   }
-  
+
+  if (username !== savedUsername) {
+    showToast("Invalid username", "fa-exclamation-circle");
+    return;
+  }
+
+  if (isPasswordless) {
+  } else {
+    if (!password) {
+      showToast("Please enter password", "fa-exclamation-circle");
+      return;
+    }
+
+    const hashedPassword = hashPassword(password);
+    if (hashedPassword !== savedPassword) {
+      showToast("Invalid password", "fa-exclamation-circle");
+      return;
+    }
+  }
+
+  currentUsername = username;
   document.getElementById("displayUsername").textContent = username;
 
   if (username.toLowerCase() === "dinguschan" || username.toLowerCase() === "$xor" || username.toLowerCase() === "lanefiedler-731") {
@@ -2020,8 +1404,7 @@ function login() {
   }
 
   showToast("Welcome back, " + username + "!", "fa-circle-check");
-  var event = new CustomEvent('Login Success');
-  window.dispatchEvent(event);
+
   unlockAchievement("first-login");
 
   checkNightOwl();
@@ -2038,46 +1421,46 @@ function login() {
 
     setTimeout(() => {
       console.log(`[LOGIN LOG] ${new Date().toISOString()}: Desktop active, starting clock and initialization`);
-      startClock();
-
-      const iconsContainer = document.getElementById("desktopIcons");
-      if (iconsContainer) {
-        const installedIcons = iconsContainer.querySelectorAll(
-          ".desktop-icon[data-app]"
-        );
-        installedIcons.forEach((icon) => {
-          const appName = icon.getAttribute("data-app");
-          if (installedApps.includes(appName)) {
-            icon.remove();
-          }
-        });
-
-        installedApps.forEach((appName) => {
-          addDesktopIcon(appName);
-        });
-      }
-
-      initDesktopIconDragging();
-      initContextMenu();
-      initScrollIndicator();
-
-      updateStartMenu();
-
-      // Show theme application toast after desktop loads
-      if (appliedThemeName) {
-        setTimeout(() => {
-          showToast(`Applied ${appliedThemeName.charAt(0).toUpperCase() + appliedThemeName.slice(1)} theme!`, "fa-check-circle");
-          appliedThemeName = null;
-        }, 1000);
-      }
-
-      const showWhatsNew = localStorage.getItem("nautilusOS_showWhatsNew");
-      if (showWhatsNew === null || showWhatsNew === "true") {
-        console.log(`[LOGIN LOG] ${new Date().toISOString()}: Opening What's New app`);
-        setTimeout(() => {
-          openApp("whatsnew");
-        }, 800);
-      }
+        startClock();
+  
+        const iconsContainer = document.getElementById("desktopIcons");
+        if (iconsContainer) {
+          const installedIcons = iconsContainer.querySelectorAll(
+            ".desktop-icon[data-app]"
+          );
+          installedIcons.forEach((icon) => {
+            const appName = icon.getAttribute("data-app");
+            if (installedApps.includes(appName)) {
+              icon.remove();
+            }
+          });
+  
+          installedApps.forEach((appName) => {
+            addDesktopIcon(appName);
+          });
+        }
+  
+        initDesktopIconDragging();
+        initContextMenu();
+        initScrollIndicator();
+  
+        updateStartMenu();
+  
+        // Show theme application toast after desktop loads
+        if (appliedThemeName) {
+          setTimeout(() => {
+            showToast(`Applied ${appliedThemeName.charAt(0).toUpperCase() + appliedThemeName.slice(1)} theme!`, "fa-check-circle");
+            appliedThemeName = null;
+          }, 1000);
+        }
+  
+        const showWhatsNew = localStorage.getItem("nautilusOS_showWhatsNew");
+        if (showWhatsNew === null || showWhatsNew === "true") {
+          console.log(`[LOGIN LOG] ${new Date().toISOString()}: Opening What's New app`);
+          setTimeout(() => {
+            openApp("whatsnew");
+          }, 800);
+        }
     }, 100);
   }, 500);
 }
@@ -2469,8 +1852,6 @@ function minimizeWindow(btn) {
 function maximizeWindow(btn) {
   const window = btn.closest(".window");
   const icon = btn.querySelector("i");
-  const appName = window.dataset.appName;
-  const taskbar = document.getElementById("taskbar");
 
   if (window.dataset.maximized === "true") {
     window.style.width = window.dataset.oldWidth;
@@ -2484,13 +1865,6 @@ function maximizeWindow(btn) {
     window.style.borderRadius = "12px";
     const header = window.querySelector(".window-header");
     if (header) header.style.borderRadius = "0";
-    
-    // Show taskbar
-    if (taskbar) {
-      taskbar.style.transform = "translateX(-50%) translateY(0)";
-      const expandBtn = document.getElementById("taskbarExpandBtn");
-      if (expandBtn) expandBtn.remove();
-    }
   } else {
     window.dataset.oldWidth = window.style.width;
     window.dataset.oldHeight = window.style.height;
@@ -2508,78 +1882,11 @@ function maximizeWindow(btn) {
     window.style.borderRadius = "1px";
     const header = window.querySelector(".window-header");
     if (header) header.style.borderRadius = "1px";
-    
-    // Hide taskbar and show expand button
-    if (taskbar) {
-      taskbar.style.transition = "transform 0.3s ease";
-      taskbar.style.transform = "translateX(-50%) translateY(calc(100% + 20px))";
-      
-      // Create expand button if it doesn't exist
-      let expandBtn = document.getElementById("taskbarExpandBtn");
-      if (!expandBtn) {
-        expandBtn = document.createElement("div");
-        expandBtn.id = "taskbarExpandBtn";
-        expandBtn.innerHTML = '<i class="fas fa-chevron-up"></i>';
-        expandBtn.style.cssText = `
-          position: fixed;
-          bottom: 0;
-          left: 50%;
-          transform: translateX(-50%);
-          background: var(--accent);
-          color: #0f172a;
-          width: 60px;
-          height: 20px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          border-radius: 8px 8px 0 0;
-          cursor: pointer;
-          z-index: 10001;
-          transition: all 0.2s;
-          box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
-        `;
-        
-        expandBtn.addEventListener("mouseenter", () => {
-          expandBtn.style.height = "25px";
-          taskbar.style.transform = "translateX(-50%) translateY(0)";
-        });
-        
-        expandBtn.addEventListener("mouseleave", () => {
-          setTimeout(() => {
-            if (!taskbar.matches(':hover')) {
-              expandBtn.style.height = "20px";
-              taskbar.style.transform = "translateX(-50%) translateY(calc(100% + 20px))";
-            }
-          }, 300);
-        });
-        
-        taskbar.addEventListener("mouseleave", () => {
-          setTimeout(() => {
-            if (!expandBtn.matches(':hover') && !taskbar.matches(':hover')) {
-              taskbar.style.transform = "translateX(-50%) translateY(calc(100% + 20px))";
-            }
-          }, 300);
-        });
-        
-        document.body.appendChild(expandBtn);
-      }
-    }
-  }
-
-  // Handle V86 emulator display scaling adjustments
-  if (appName === "v86-emulator") {
-    handleV86WindowResize(window);
   }
 }
 
 function closeWindow(btn, appName) {
   const window = btn.closest(".window");
-
-  // Handle V86 emulator cleanup before closing window
-  if (appName === "v86-emulator") {
-    handleV86WindowClose(window);
-  }
-
   window.style.animation = "windowMinimize 0.25s ease forwards";
   setTimeout(() => {
     window.remove();
@@ -2792,14 +2099,8 @@ function openFile(filename) {
         focusWindow(windows["photos"]);
       }
     } else {
-      // Check if it's a Python file
-      if (filename.endsWith(".py")) {
-        currentFile = filename;
-        openApp("python", item, filename);
-      } else {
-        currentFile = filename;
-        openApp("editor", item, filename);
-      }
+      currentFile = filename;
+      openApp("editor", item, filename);
     }
   }
 }
@@ -2834,7 +2135,7 @@ async function signOut() {
     }, 500);
   }
 }
-async function saveFile() {
+function saveFile() {
   const filenameInput = document.getElementById("editorFilename");
   const textarea = document.querySelector(".editor-textarea");
 
@@ -2869,10 +2170,9 @@ async function saveFile() {
   if (windows["files"]) {
     updateFileExplorer();
   }
-  await saveFS(fileSystem);
 }
 
-async function saveAsNewFile() {
+function saveAsNewFile() {
   const textarea = document.querySelector(".editor-textarea");
   if (!textarea) return;
 
@@ -2895,7 +2195,6 @@ async function saveAsNewFile() {
   if (windows["files"]) {
     updateFileExplorer();
   }
-  await saveFS(fileSystem);
 }
 
 function saveToDevice() {
@@ -2929,12 +2228,6 @@ function resetBootloader() {
 }
 
 function openApp(appName, editorContent = "", filename = "") {
-  // Check app permissions
-  if (!hasAppPermission(appName)) {
-    showToast(`Access denied: You don't have permission to use ${appMetadata[appName]?.name || appName}`, "fa-exclamation-circle");
-    return;
-  }
-  
   const menu = document.getElementById("startMenu");
   if (menu.classList.contains("active")) {
     toggleStartMenu();
@@ -3040,10 +2333,10 @@ function openApp(appName, editorContent = "", filename = "") {
       width: 900,
       height: 600,
     },
-    2048: {
-      title: "2048",
-      icon: "fas fa-th",
-      content: `
+    "2048": {
+  title: "2048",
+  icon: "fas fa-th",
+  content: `
     <div style="display: flex; align-items: center; justify-content: center; height: 100%; background: var(--bg-primary); padding: 20px; gap: 40px;">
       <div style="display: flex; flex-direction: column; gap: 20px;">
         <div style="text-align: center;">
@@ -3072,15 +2365,15 @@ function openApp(appName, editorContent = "", filename = "") {
       <div id="game2048Board" style="display: grid; grid-template-columns: repeat(4, 100px); gap: 10px;"></div>
     </div>
   `,
-      noPadding: true,
-      width: 700,
-      height: 600,
-    },
+  noPadding: true,
+  width: 700,
+  height: 600,
+},
     browser: {
       title: "Nautilus Browser",
       icon: "fas fa-globe",
       content: (() => {
-        if (!checkFileProtocol("Nautilus Browser")) {
+        if (!checkFileProtocol()) {
           return `
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 3rem; background: rgba(10, 14, 26, 0.8);">
               <i class="fas fa-exclamation-triangle" style="font-size: 5rem; color: var(--error-red); margin-bottom: 2rem;"></i>
@@ -3231,7 +2524,7 @@ alt="favicon">
                         
                         <div class="cloaking-actions">
                             <button class="cloaking-btn primary" onclick="applyCloaking()">
-                                <i class="fas fa-check-circle"></i> Apply Cloak
+                                <i class="fas fa-check"></i> Apply Cloak
                             </button>
                             <button class="cloaking-btn secondary" onclick="resetCloaking()">
                                 <i class="fas fa-undo"></i> Reset to Default
@@ -3243,7 +2536,7 @@ alt="favicon">
                 <div class="cloaking-tab" data-tab="rotate">
                     <div class="cloaking-header">
                         <h2><i class="fas fa-sync-alt"></i> Auto-Rotate Cloaking</h2>
-                        <p>Automatically cycle through multiple disguises, keeping your tab constantly changing</p>
+                        <p>Automatically cycle through multiple disguises</p>
                     </div>
                     
                     <div class="cloaking-status-card">
@@ -3550,7 +2843,7 @@ alt="favicon">
                         <div class="settings-item">
                             <div class="settings-item-text">
                                 <div class="settings-item-title">Show on Startup</div>
-                                <div class="settings-item-desc">Open the What's New app automatically after logging in</div>
+                                <div class="settings-item-desc">Open What's New window when logging in</div>
                             </div>
                             <div class="toggle-switch ${
                               localStorage.getItem(
@@ -3675,10 +2968,10 @@ alt="favicon">
                     <div class="settings-card-body">
                         <div class="settings-item">
                             <p class="settings-description">The website all browsers will use to search. The default search engine is Brave.</p>
-                            <select style="margin-left: 10.1px; background: var(--bg-secondary) !important;">
+                            <select style="margin-left: 10.1px; border-radius: 12.5px;">
         <button>
             <div>
-                <selectedcontent style="scale: 1.1;"></selectedcontent>
+                <selectedcontent style="scale: 1.1;"> </selectedcontent>
                 <svg style="scale: 1.8;" width="128" height="128" viewBox="0 0 24 24">
                     <path fill="currentColor" d="m7 10l5 5l5-5z" />
                 </svg>
@@ -3760,7 +3053,7 @@ alt="favicon">
                                 <div class="settings-item-title">Account Type</div>
                                 <div class="settings-item-desc">Permission level</div>
                             </div>
-                            <div class="settings-item-value">${currentUserAccount?.role === "superuser" ? "Super User" : "Standard User"}</div>
+                            <div class="settings-item-value">Standard User</div>
                         </div>
                     </div>
                 </div>
@@ -3804,23 +3097,6 @@ alt="favicon">
                         </button>
                     </div>
                 </div>
-
-                ${currentUserAccount?.role === "superuser" ? `
-                <div class="settings-card">
-                    <div class="settings-card-header">
-                        <i class="fas fa-users-cog"></i>
-                        <span>Account Management</span>
-                    </div>
-                    <div class="settings-card-body">
-                        <p class="settings-description">
-                            As a super user, you can manage all user accounts and their permissions.
-                        </p>
-                        <button class="settings-action-btn" onclick="openAccountManager()">
-                            <i class="fas fa-users"></i> Manage Accounts
-                        </button>
-                    </div>
-                </div>
-                ` : ''}
             </div>
             
             <div class="settings-tab-content" data-tab="advanced">
@@ -3935,7 +3211,7 @@ alt="favicon">
 
         if (photoList.length === 0) {
           return `
-                      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 3rem; background: var(--bg-secondary);">
+                      <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 3rem; background: rgba(10, 14, 26, 0.8);">
                           <i class="fas fa-images" style="font-size: 5rem; color: var(--accent); margin-bottom: 2rem;"></i>
                           <h2 style="margin-bottom: 1rem; color: var(--text-primary);">No Photos Yet</h2>
                           <p style="color: var(--text-secondary);">Take a screenshot to get started!</p>
@@ -4480,60 +3756,6 @@ alt="favicon">
       width: 400,
       height: 600,
     },
-    python: {
-      title: "Python Interpreter",
-      icon: "fas fa-code",
-      content: `
-              <div class="python-interpreter">
-                  <div class="python-toolbar">
-                      <button class="editor-btn" onclick="runPythonCode()">
-                          <i class="fas fa-play"></i> Run
-                      </button>
-                      <button class="editor-btn" onclick="clearPythonOutput()">
-                          <i class="fas fa-eraser"></i> Clear Output
-                      </button>
-                      <button class="editor-btn" onclick="savePythonFile()">
-                          <i class="fas fa-save"></i> Save
-                      </button>
-                      <button class="editor-btn" onclick="loadPythonFile()">
-                          <i class="fas fa-folder-open"></i> Load
-                      </button>
-                      <input type="text" id="pythonFilename" class="editor-filename" placeholder="script.py" value="${filename || 'script.py'}">
-                  </div>
-                  <div class="python-editor-container">
-                      <div class="python-editor-section">
-                          <div class="python-section-header">
-                              <i class="fas fa-code"></i> Python Code Editor
-                          </div>
-                          <textarea class="python-code-editor" id="pythonCodeEditor" placeholder="# Write your Python code here
-# Example:
-print('Hello from NautilusOS!')
-
-# Basic operations
-x = 10
-y = 20
-result = x + y
-print(f'Result: {result}')
-
-# List operations
-numbers = [1, 2, 3, 4, 5]
-print(f'Numbers: {numbers}')
-print(f'Sum: {sum(numbers)}')
-">${editorContent || ''}</textarea>
-                      </div>
-                      <div class="python-output-section">
-                          <div class="python-section-header">
-                              <i class="fas fa-terminal"></i> Output Console
-                          </div>
-                          <div class="python-output" id="pythonOutput"></div>
-                      </div>
-                  </div>
-              </div>
-          `,
-      noPadding: true,
-      width: 900,
-      height: 600,
-    },
     "snap-manager": {
       title: "Snap Manager",
       icon: "fas fa-border-all",
@@ -4546,7 +3768,7 @@ print(f'Sum: {sum(numbers)}')
       title: "Ultraviolet",
       icon: "fas fa-globe",
       content: (() => {
-        if (!checkFileProtocol("Ultraviolet")) {
+        if (!checkFileProtocol()) {
           return `
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 3rem; background: rgba(10, 14, 26, 0.8);">
               <i class="fas fa-exclamation-triangle" style="font-size: 5rem; color: var(--error-red); margin-bottom: 2rem;"></i>
@@ -4569,7 +3791,7 @@ print(f'Sum: {sum(numbers)}')
       title: "Visual Studio Code",
       icon: "fas fa-code",
       content: (() => {
-        if (!checkFileProtocol("Visual Studio Code")) {
+        if (!checkFileProtocol()) {
           return `
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 3rem; background: rgba(10, 14, 26, 0.8);">
               <i class="fas fa-exclamation-triangle" style="font-size: 5rem; color: var(--error-red); margin-bottom: 2rem;"></i>
@@ -4579,36 +3801,9 @@ print(f'Sum: {sum(numbers)}')
           `;
         }
         return `
-        <style>
-        
-        .loader {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            border: 3px solid rgb(255, 255, 255, 1);
-            border-top-color: transparent;
-            border-right-color: transparent;
-            animation: rot1 0.5s linear infinite;
-            z-index: -1;
-        }
-
-        @keyframes rot1 {
-            to {
-                transform: rotate(360deg);
-            }
-        }
-            
-        </style>
-
         <div class="browser-container" style="overflow: hidden;">
-                  <div style="position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: -5;">
-                    <center>
-                    <div class="loader"></div><br>
-                    <h5 style="margin-bottom: 10px;">Launching VS Code with Ultraviolet...</h5>
-                    <p>Load times may vary</p>
-                    </center>
-                  </div>
-                  <iframe src="/uv/service/hvtrs8%2F-vqcmdg.fet%2F" frameborder="0" style="width: 100%; height: 100vh; border-radius: 0px; margin: 0;"></iframe>
+                  <h1 style="z-index: -1; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);">Loading...</h1>
+                      <iframe src="/uv/service/hvtrs8%2F-vqcmdg.fet%2F" frameborder="0" style="width: 100%; height: 100vh; border-radius: 0px; margin: 0;"></iframe>
               </div>
       `;
       })(),
@@ -4620,7 +3815,7 @@ print(f'Sum: {sum(numbers)}')
       title: "Helios Browser",
       icon: "fas fa-globe",
       content: (() => {
-        if (!checkFileProtocol("Helios Browser")) {
+        if (!checkFileProtocol()) {
           return `
             <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 3rem; background: rgba(10, 14, 26, 0.8);">
               <i class="fas fa-exclamation-triangle" style="font-size: 5rem; color: var(--error-red); margin-bottom: 2rem;"></i>
@@ -4646,187 +3841,132 @@ print(f'Sum: {sum(numbers)}')
         const lightThemeInstalled = installedThemes.includes("light");
         return `
               <div class="appstore-content">
-    <div class="appstore-sidebar">
-        <div class="appstore-section active" onclick="switchAppStoreSection('themes', this)">
-            <i class="fas fa-palette"></i>
-            <span>Themes</span>
-        </div>
-        <div class="appstore-section" onclick="switchAppStoreSection('apps', this)">
-            <i class="fas fa-th"></i>
-            <span>Apps</span>
-        </div>
-        <div class="appstore-section" onclick="switchAppStoreSection('games', this)">
-            <i class="fas fa-gamepad"></i>
-            <span>Games</span>
-        </div>
-    </div>
-    <div class="appstore-main" id="appstoreMain">
-        <div class="appstore-header">
-            <h2>Themes</h2>
-            <p>Customize your NautilusOS experience</p>
-        </div>
-        <div class="appstore-grid">
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-moon"></i>
-                </div>
-                <div class="appstore-item-name">Dark Theme by dinguschan</div>
-                <div class="appstore-item-desc">The default NautilusOS theme. Sleek dark interface with teal accents,
-                    perfect for extended use and reducing eye strain.</div>
-                <button class="appstore-item-btn installed" style="opacity: 0.6; cursor: not-allowed;" disabled>
-                    Installed (Default)
-                </button>
-            </div>
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-sun"></i>
-                </div>
-                <div class="appstore-item-name">Light Theme by dinguschan</div>
-                <div class="appstore-item-desc">A bright and clean theme perfect for daytime use. Easy on the eyes with
-                    light backgrounds and dark text.</div>
-                <button class="appstore-item-btn ${
-                  lightThemeInstalled ? "installed" : ""
-                }" onclick="${
+                  <div class="appstore-sidebar">
+          <div class="appstore-section active" onclick="switchAppStoreSection('themes', this)">
+              <i class="fas fa-palette"></i>
+              <span>Themes</span>
+          </div>
+          <div class="appstore-section" onclick="switchAppStoreSection('apps', this)">
+              <i class="fas fa-th"></i>
+              <span>Apps</span>
+          </div>
+          <div class="appstore-section" onclick="switchAppStoreSection('games', this)">
+              <i class="fas fa-gamepad"></i>
+              <span>Games</span>
+          </div>
+      </div>
+                  <div class="appstore-main" id="appstoreMain">
+                      <div class="appstore-header">
+                          <h2>Themes</h2>
+                          <p>Customize your NautilusOS experience</p>
+                      </div>
+                      <div class="appstore-grid">
+                          <div class="appstore-item">
+                              <div class="appstore-item-icon">
+                                  <i class="fas fa-moon"></i>
+                              </div>
+                              <div class="appstore-item-name">Dark Theme by dinguschan</div>
+                              <div class="appstore-item-desc">The default NautilusOS theme. Sleek dark interface with teal accents, perfect for extended use and reducing eye strain.</div>
+                              <button class="appstore-item-btn installed" style="opacity: 0.6; cursor: not-allowed;" disabled>
+                                  Installed (Default)
+                              </button>
+                          </div>
+                          <div class="appstore-item">
+                              <div class="appstore-item-icon">
+                                  <i class="fas fa-sun"></i>
+                              </div>
+                              <div class="appstore-item-name">Light Theme by dinguschan</div>
+                              <div class="appstore-item-desc">A bright and clean theme perfect for daytime use. Easy on the eyes with light backgrounds and dark text.</div>
+                              <button class="appstore-item-btn ${
+                                lightThemeInstalled ? "installed" : ""
+                              }" onclick="${
           lightThemeInstalled
-            ? " uninstallTheme('light')"
+            ? "uninstallTheme('light')"
             : "installTheme('light')"
         }">
-                    ${lightThemeInstalled ? "Uninstall" : "Install"}
-                </button>
-            </div>
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-crown" style="color: #d4af37;"></i>
-                </div>
-                <div class="appstore-item-name">Golden Theme by lanefiedler-731</div>
-                <div class="appstore-item-desc">Elegant golden accents with warm, luxurious dark backgrounds. Perfect
-                    for a premium look.</div>
-                <button class="appstore-item-btn ${
-                  installedThemes.includes("golden") ? "installed" : ""
-                }"
-                    onclick="${
-                      installedThemes.includes("golden")
-                        ? "uninstallTheme('golden')"
-                        : "installTheme('golden')"
-                    }">
-                    ${
-                      installedThemes.includes("golden")
-                        ? "Uninstall"
-                        : "Install"
-                    }
-                </button>
-            </div>
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-fire" style="color: #ef4444;"></i>
-                </div>
-                <div class="appstore-item-name">Red Theme by lanefiedler-731</div>
-                <div class="appstore-item-desc">Bold and vibrant red accents for those who want to stand out. Energy
-                    meets elegance.</div>
-                <button class="appstore-item-btn ${
-                  installedThemes.includes("red") ? "installed" : ""
-                }"
-                    onclick="${
-                      installedThemes.includes("red")
-                        ? "uninstallTheme('red')"
-                        : "installTheme('red')"
-                    }">
-                    ${installedThemes.includes("red") ? "Uninstall" : "Install"}
-                </button>
-            </div>
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-droplet" style="color: #3b82f6;"></i>
-                </div>
-                <div class="appstore-item-name">Blue Theme by lanefiedler-731</div>
-                <div class="appstore-item-desc">Cool and calming blue tones. Professional and soothing for extended use.
-                </div>
-                <button class="appstore-item-btn ${
-                  installedThemes.includes("blue") ? "installed" : ""
-                }"
-                    onclick="${
-                      installedThemes.includes("blue")
-                        ? "uninstallTheme('blue')"
-                        : "installTheme('blue')"
-                    }">
-                    ${
-                      installedThemes.includes("blue") ? "Uninstall" : "Install"
-                    }
-                </button>
-            </div>
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-palette" style="color: #ffffff;"></i>
-                </div>
-                <div class="appstore-item-name">Purple Theme by lanefiedler-731</div>
-                <div class="appstore-item-desc">Deep shades combined with royal hues, crafted together for the perfect purple theme.</div>
-                <button class="appstore-item-btn ${
-                  installedThemes.includes("purple") ? "installed" : ""
-                }"
-                    onclick="${
-                      installedThemes.includes("purple")
-                        ? "uninstallTheme('purple')"
-                        : "installTheme('purple')"
-                    }">
-                    ${
-                      installedThemes.includes("purple")
-                        ? "Uninstall"
-                        : "Install"
-                    }
-                </button>
-            </div>
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-palette" style="color: #ffffff;"></i>
-                </div>
-                <div class="appstore-item-name">Green Theme by lanefiedler-731</div>
-                <div class="appstore-item-desc">Rich shades of green with splashes of lime and seaweed, this is quite the exquisite theme.</div>
-                <button class="appstore-item-btn ${
-                  installedThemes.includes("green") ? "installed" : ""
-                }"
-                    onclick="${
-                      installedThemes.includes("green")
-                        ? "uninstallTheme('green')"
-                        : "installTheme('green')"
-                    }">
-                    ${
-                      installedThemes.includes("green")
-                        ? "Uninstall"
-                        : "Install"
-                    }
-                </button>
-            </div>
-            <div class="appstore-item">
-                <div class="appstore-item-icon">
-                    <i class="fas fa-palette" style="color: #ffffff;"></i>
-                </div>
-                <div class="appstore-item-name">Liquid Glass by $xor</div>
-                <div class="appstore-item-desc">An Apple insipired theme with a beautiful translucent look.</div>
-                <button class="appstore-item-btn ${
-                  installedThemes.includes("liquidGlass") ? "installed" : ""
-                }"
-                    onclick="${
-                      installedThemes.includes("liquidGlass")
-                        ? "uninstallTheme('liquidGlass')"
-                        : "installTheme('liquidGlass')"
-                    }">
-                    ${
-                      installedThemes.includes("liquidGlass")
-                        ? "Uninstall"
-                        : "Install"
-                    }
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
+                                  ${
+                                    lightThemeInstalled
+                                      ? "Uninstall"
+                                      : "Install"
+                                  }
+                              </button>
+                          </div>
+                          <div class="appstore-item">
+                              <div class="appstore-item-icon">
+                                  <i class="fas fa-crown" style="color: #d4af37;"></i>
+                              </div>
+                              <div class="appstore-item-name">Golden Theme by lanefiedler-731</div>
+                              <div class="appstore-item-desc">Elegant golden accents with warm, luxurious dark backgrounds. Perfect for a premium look.</div>
+                              <button class="appstore-item-btn ${
+                                installedThemes.includes("golden")
+                                  ? "installed"
+                                  : ""
+                              }" onclick="${
+          installedThemes.includes("golden")
+            ? "uninstallTheme('golden')"
+            : "installTheme('golden')"
+        }">
+                                  ${
+                                    installedThemes.includes("golden")
+                                      ? "Uninstall"
+                                      : "Install"
+                                  }
+                              </button>
+                          </div>
+                          <div class="appstore-item">
+                              <div class="appstore-item-icon">
+                                  <i class="fas fa-fire" style="color: #ef4444;"></i>
+                              </div>
+                              <div class="appstore-item-name">Red Theme by lanefiedler-731</div>
+                              <div class="appstore-item-desc">Bold and vibrant red accents for those who want to stand out. Energy meets elegance.</div>
+                              <button class="appstore-item-btn ${
+                                installedThemes.includes("red")
+                                  ? "installed"
+                                  : ""
+                              }" onclick="${
+          installedThemes.includes("red")
+            ? "uninstallTheme('red')"
+            : "installTheme('red')"
+        }">
+                                  ${
+                                    installedThemes.includes("red")
+                                      ? "Uninstall"
+                                      : "Install"
+                                  }
+                              </button>
+                          </div>
+                          <div class="appstore-item">
+                              <div class="appstore-item-icon">
+                                  <i class="fas fa-droplet" style="color: #3b82f6;"></i>
+                              </div>
+                              <div class="appstore-item-name">Blue Theme by lanefiedler-731</div>
+                              <div class="appstore-item-desc">Cool and calming blue tones. Professional and soothing for extended use.</div>
+                              <button class="appstore-item-btn ${
+                                installedThemes.includes("blue")
+                                  ? "installed"
+                                  : ""
+                              }" onclick="${
+          installedThemes.includes("blue")
+            ? "uninstallTheme('blue')"
+            : "installTheme('blue')"
+        }">
+                                  ${
+                                    installedThemes.includes("blue")
+                                      ? "Uninstall"
+                                      : "Install"
+                                  }
+                              </button>
+                          </div>
+                      </div>
+                  </div>
+              </div>
               `;
       })(),
       noPadding: true,
       width: 900,
       height: 600,
     },
-    snake: {
+snake: {
       title: "Snake",
       icon: "fas fa-gamepad",
       content: `
@@ -4864,7 +4004,7 @@ print(f'Sum: {sum(numbers)}')
       width: 700,
       height: 600,
     },
-    tictactoe: {
+tictactoe: {
       title: "Tic-Tac-Toe",
       icon: "fas fa-circle",
       content: `
@@ -4898,230 +4038,7 @@ print(f'Sum: {sum(numbers)}')
       noPadding: true,
       width: 650,
       height: 550,
-    },
-    "v86-emulator": {
-      title: "V86 Emulator",
-      icon: "fas fa-microchip",
-      content: (() => {
-        return generateV86Interface();
-      })(),
-      noPadding: true,
-      width: 1000,
-      height: 700,
-    },
-"ai-snake": {
-  title: "AI Snake Learning",
-  icon: "fas fa-brain",
-  content: `
-    <div id="aiSnakeContainer" style="display: flex; flex-direction: column; height: 100%; background: rgba(10, 14, 26, 0.8); padding: 20px; overflow-y: auto;">
-      <div style="max-width: 800px; margin: 0 auto; width: 100%;">
-      <div style="text-align: center; margin-bottom: 20px;">
-        <h2 style="color: #7dd3c0; margin: 0 0 5px 0; font-family: fontb;">AI Snake Learning</h2>
-        <div style="color: #9aa0a6; font-size: 12px; margin-bottom: 10px;">by lanefiedler-731</div>
-        <div style="color: #9aa0a6; font-size: 11px;">Deep Q-Learning Neural Network</div>
-      </div>
-      
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-        <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 12px;">
-          <div style="color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Generation</div>
-          <div id="aiGeneration" style="color: #7dd3c0; font-size: 20px; font-weight: bold; font-family: fontb;">0</div>
-        </div>
-        <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 12px;">
-          <div style="color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Best Score</div>
-          <div id="aiBestScore" style="color: #7dd3c0; font-size: 20px; font-weight: bold; font-family: fontb;">0</div>
-        </div>
-        <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 12px;">
-          <div style="color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Current Score</div>
-          <div id="aiCurrentScore" style="color: #4ade80; font-size: 20px; font-weight: bold; font-family: fontb;">0</div>
-        </div>
-        <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 12px;">
-          <div style="color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Games Played</div>
-          <div id="aiGamesPlayed" style="color: #7dd3c0; font-size: 20px; font-weight: bold; font-family: fontb;">0</div>
-        </div>
-      </div>
-
-      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
-        <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 12px;">
-          <div style="color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Average Score</div>
-          <div id="aiAvgScore" style="color: #9aa0a6; font-size: 18px; font-weight: bold; font-family: fontb;">0</div>
-        </div>
-        <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 12px;">
-          <div style="color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Epsilon (Exploration)</div>
-          <div id="aiEpsilon" style="color: #7dd3c0; font-size: 18px; font-weight: bold; font-family: fontb;">1.00</div>
-        </div>
-      </div>
-
-      <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 15px; margin-bottom: 15px;">
-        <div style="color: #7dd3c0; font-weight: bold; margin-bottom: 10px; font-size: 14px; font-family: fontb;">Training Settings</div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-          <div>
-            <label style="display: block; color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Game Speed (ms)</label>
-            <input type="range" id="aiGameSpeed" min="1" max="200" value="10" style="width: 100%; accent-color: #7dd3c0;">
-            <div style="text-align: center; color: #7dd3c0; font-size: 12px; margin-top: 3px; font-family: fontb;"><span id="aiGameSpeedValue">10</span> ms</div>
-          </div>
-          <div>
-            <label style="display: block; color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Training Speed (iterations)</label>
-            <input type="range" id="aiTrainingSpeed" min="1" max="100" value="10" style="width: 100%; accent-color: #7dd3c0;">
-            <div style="text-align: center; color: #7dd3c0; font-size: 12px; margin-top: 3px; font-family: fontb;"><span id="aiTrainingSpeedValue">10</span> iterations</div>
-          </div>
-          <div>
-            <label style="display: block; color: #9aa0a6; font-size: 11px; margin-bottom: 5px;">Concurrency (parallel games)</label>
-            <input type="range" id="aiConcurrency" min="1" max="20" value="5" style="width: 100%; accent-color: #7dd3c0;">
-            <div style="text-align: center; color: #7dd3c0; font-size: 12px; margin-top: 3px; font-family: fontb;"><span id="aiConcurrencyValue">5</span> games</div>
-          </div>
-          <div>
-            <label style="display: flex; align-items: center; gap: 8px; color: #9aa0a6; font-size: 11px; margin-top: 20px;">
-              <input type="checkbox" id="aiUseGPU" checked style="width: 18px; height: 18px; cursor: pointer; accent-color: #7dd3c0;">
-              <span>Use GPU Acceleration</span>
-            </label>
-            <div id="aiGPUStatus" style="color: #4ade80; font-size: 10px; margin-top: 5px; margin-left: 26px;">GPU Ready</div>
-          </div>
-        </div>
-      </div>
-
-      <div style="display: flex; gap: 10px; margin-bottom: 15px;">
-        <button id="aiStartBtn" class="editor-btn" onclick="startAISnakeTraining()" style="flex: 1; background: linear-gradient(135deg, #7dd3c0, #6bc4b0); color: #0a0e1a; border: none; padding: 10px; border-radius: 10px; cursor: pointer; font-weight: bold; font-family: fontb; transition: all 0.2s ease;">Start Training</button>
-        <button id="aiPauseBtn" class="editor-btn" onclick="pauseAISnakeTraining()" style="flex: 1; background: rgba(125, 211, 192, 0.2); color: #7dd3c0; border: 1px solid #7dd3c0; padding: 10px; border-radius: 10px; cursor: pointer; font-weight: bold; font-family: fontb; display: none; transition: all 0.2s ease;">Pause</button>
-        <button id="aiResetBtn" class="editor-btn" onclick="resetAISnakeModel()" style="flex: 1; background: rgba(239, 68, 68, 0.2); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 10px; border-radius: 10px; cursor: pointer; font-weight: bold; font-family: fontb; transition: all 0.2s ease;">Reset Model</button>
-      </div>
-
-      <div style="background: rgba(30, 35, 48, 0.6); border: 1px solid #7dd3c0; border-radius: 12px; padding: 15px; margin-bottom: 15px;">
-        <div style="color: #7dd3c0; font-weight: bold; margin-bottom: 10px; font-size: 14px; font-family: fontb;">Training Status</div>
-        <div id="aiTrainingStatus" style="color: #9aa0a6; font-size: 11px; line-height: 1.6; font-family: 'SUSE Mono', monospace;">Ready to start training...</div>
-      </div>
-
-      <canvas id="aiSnakeCanvas" width="400" height="400" style="background: #0a0e1a; border: 2px solid #7dd3c0; border-radius: 12px; margin: 0 auto; display: block;"></canvas>
-      <div style="color: #9aa0a6; font-size: 10px; margin-top: 10px; text-align: center;">
-        Watch the AI learn to play Snake!
-      </div>
-      </div>
-    </div>
-  `,
-  noPadding: true,
-  width: 850,
-  height: 600,
-},
-    "nautilus-ai": {
-      title: "Nautilus AI Assistant",
-      icon: "fas fa-robot",
-      content: `
-        <div id="nautilusAiContainer" style="display: flex; flex-direction: column; height: 100%; background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);">
-          <div style="background: rgba(15, 23, 42, 0.9); border-bottom: 2px solid rgba(125, 211, 192, 0.3); padding: 15px 20px;">
-            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
-              <i class="fas fa-robot" style="color: var(--accent); font-size: 24px;"></i>
-              <div>
-                <h2 style="color: var(--accent); margin: 0; font-size: 18px;">Nautilus AI Assistant</h2>
-                <div style="color: #94a3b8; font-size: 11px; margin-top: 2px;">by lanefiedler-731 | Powered by WebLLM</div>
-              </div>
-            </div>
-            <div id="aiStatus" style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #64748b;">
-              <div class="loading-spinner" style="width: 12px; height: 12px; border: 2px solid rgba(125, 211, 192, 0.3); border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite;"></div>
-              <span>Initializing AI model...</span>
-            </div>
-          </div>
-          
-          <div style="background: rgba(15, 23, 42, 0.5); border-bottom: 1px solid rgba(125, 211, 192, 0.2); padding: 8px 20px;">
-            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 11px; color: #64748b;">
-              <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <i class="fas fa-robot" style="color: var(--accent);"></i>
-                  <span>Model:</span>
-                  <select id="aiModelSelect" onchange="switchAIModel(this.value)" style="background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(125, 211, 192, 0.3); border-radius: 4px; padding: 4px 8px; color: var(--accent); cursor: pointer; font-size: 11px;">
-                    <option value="fast" selected>⚡ Dumb Fast</option>
-                    <option value="smart">🧠 Smart Slow</option>
-                  </select>
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <i class="fas fa-microchip" style="color: var(--accent);"></i>
-                  <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                    <input type="checkbox" id="aiWebGPUToggle" checked style="cursor: pointer;">
-                    <span>WebGPU</span>
-                  </label>
-                </div>
-              </div>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <i class="fas fa-cogs" style="color: var(--accent);"></i>
-                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
-                  <input type="checkbox" id="aiAutomationToggle" checked style="cursor: pointer;" onchange="nautilusAI.toolsEnabled = this.checked; showToast(this.checked ? 'OS Automation Enabled' : 'OS Automation Disabled', 'fa-cogs');">
-                  <span style="color: var(--accent); font-weight: bold;">🤖 Automation</span>
-                </label>
-              </div>
-            </div>
-          </div>
-          
-          <div id="aiChatMessages" style="flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 15px;">
-            <div style="background: rgba(125, 211, 192, 0.1); border: 1px solid rgba(125, 211, 192, 0.3); border-radius: 10px; padding: 15px;">
-              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-                <i class="fas fa-robot" style="color: var(--accent); font-size: 18px;"></i>
-                <strong style="color: var(--accent);">Nautilus AI</strong>
-              </div>
-              <div style="color: #cbd5e1; line-height: 1.6;">
-                Hello! I'm your Nautilus AI Assistant. I can help you understand and navigate NautilusOS.<br><br>
-                <strong style="color: var(--accent);"><i class="fas fa-brain"></i> Model: Smarty (Qwen3-0.6B)</strong><br>
-                Advanced reasoning with thinking mode enabled. Switch models in the dropdown if needed.<br><br>
-                <strong style="color: var(--accent);">🤖 OS Automation Enabled!</strong><br>
-                I can control NautilusOS for you! I can open apps, run terminal commands, manage files, change settings, and more. Just ask me to do something and I'll request your approval before taking action.<br><br>
-                <strong style="color: var(--accent);">💭 Thinking Mode Active!</strong><br>
-                For complex tasks, I'll show my reasoning process in a collapsible "Thinking" section.<br><br>
-                Try: "Open calculator" or "Change theme to blue"
-              </div>
-            </div>
-          </div>
-          
-          <div style="background: rgba(15, 23, 42, 0.9); border-top: 2px solid rgba(125, 211, 192, 0.3); padding: 15px 20px;">
-            <div style="display: flex; gap: 10px;">
-              <textarea id="aiInput" placeholder="Ask me anything about NautilusOS..." style="flex: 1; background: rgba(30, 41, 59, 0.8); border: 1px solid rgba(125, 211, 192, 0.3); border-radius: 8px; padding: 12px; color: #e2e8f0; font-size: 14px; resize: none; font-family: inherit; min-height: 50px; max-height: 150px;" rows="2"></textarea>
-              <button id="aiSendBtn" onclick="sendAiMessage()" style="background: var(--accent); border: none; border-radius: 8px; padding: 0 20px; cursor: pointer; color: #0f172a; font-weight: bold; font-size: 14px; transition: all 0.2s;" onmouseover="this.style.background='var(--accent-hover)'" onmouseout="this.style.background='var(--accent)'">
-                <i class="fas fa-paper-plane"></i> Send
-              </button>
-            </div>
-            <div style="display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap;">
-              <button onclick="sendQuickQuestion('What apps are available in NautilusOS?')" style="background: rgba(125, 211, 192, 0.15); border: 1px solid rgba(125, 211, 192, 0.3); color: var(--accent); padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(125, 211, 192, 0.25)'" onmouseout="this.style.background='rgba(125, 211, 192, 0.15)'">
-                <i class="fas fa-th"></i> Available Apps
-              </button>
-              <button onclick="sendQuickQuestion('How do I manage files in NautilusOS?')" style="background: rgba(125, 211, 192, 0.15); border: 1px solid rgba(125, 211, 192, 0.3); color: var(--accent); padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(125, 211, 192, 0.25)'" onmouseout="this.style.background='rgba(125, 211, 192, 0.15)'">
-                <i class="fas fa-folder"></i> File Management
-              </button>
-              <button onclick="sendQuickQuestion('How do I customize my NautilusOS experience?')" style="background: rgba(125, 211, 192, 0.15); border: 1px solid rgba(125, 211, 192, 0.3); color: var(--accent); padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(125, 211, 192, 0.25)'" onmouseout="this.style.background='rgba(125, 211, 192, 0.15)'">
-                <i class="fas fa-palette"></i> Customization
-              </button>
-              <button onclick="clearAiChat()" style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; padding: 6px 12px; border-radius: 6px; font-size: 11px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.background='rgba(239, 68, 68, 0.25)'" onmouseout="this.style.background='rgba(239, 68, 68, 0.15)'">
-                <i class="fas fa-trash"></i> Clear Chat
-              </button>
-            </div>
-          </div>
-        </div>
-        
-        <style>
-          @keyframes spin {
-            to { transform: rotate(360deg); }
-          }
-          #aiChatMessages::-webkit-scrollbar {
-            width: 8px;
-          }
-          #aiChatMessages::-webkit-scrollbar-track {
-            background: rgba(15, 23, 42, 0.5);
-            border-radius: 4px;
-          }
-          #aiChatMessages::-webkit-scrollbar-thumb {
-            background: rgba(125, 211, 192, 0.3);
-            border-radius: 4px;
-          }
-          #aiChatMessages::-webkit-scrollbar-thumb:hover {
-            background: rgba(125, 211, 192, 0.5);
-          }
-          #aiInput:focus {
-            outline: none;
-            border-color: var(--accent);
-            box-shadow: 0 0 0 2px rgba(125, 211, 192, 0.2);
-          }
-        </style>
-      `,
-      noPadding: true,
-      width: 700,
-      height: 600,
-    },
-  };
+    },  };
 
   if (appName === "achievements") {
     openAchievements();
@@ -5131,7 +4048,7 @@ print(f'Sum: {sum(numbers)}')
   if (apps[appName]) {
     const app = apps[appName];
     trackAppOpened(appName);
-    const windowEl = createWindow(
+    createWindow(
       app.title,
       app.icon,
       app.content,
@@ -5179,29 +4096,10 @@ print(f'Sum: {sum(numbers)}')
         start2048Game();
       }, 50);
     }
-
+    
     if (appName === "tictactoe") {
       setTimeout(() => {
         startTicTacToe();
-      }, 50);
-    }
-
-    if (appName === "v86-emulator") {
-      setTimeout(() => {
-        // Load V86 resources on-demand with progress bar
-        loadV86ResourcesOnDemand(windowEl);
-      }, 50);
-    }
-    
-    if (appName === "ai-snake") {
-      setTimeout(() => {
-        initializeAISnakeApp();
-      }, 50);
-    }
-    
-    if (appName === "nautilus-ai") {
-      setTimeout(() => {
-        initializeNautilusAI();
       }, 50);
     }
   }
@@ -5471,18 +4369,21 @@ function initializeAppearanceSettings() {
   }
 
   if (desktopButton) {
-    desktopButton.innerHTML = `<i class="fas fa-upload"></i> ${hasWallpaper ? "Change Desktop Wallpaper" : "Set Desktop Wallpaper"
-      }`;
+    desktopButton.innerHTML = `<i class="fas fa-upload"></i> ${
+      hasWallpaper ? "Change Desktop Wallpaper" : "Set Desktop Wallpaper"
+    }`;
   }
 
   if (loginButton) {
-    loginButton.innerHTML = `<i class="fas fa-upload"></i> ${hasLoginWallpaper ? "Change Login Wallpaper" : "Set Login Wallpaper"
-      }`;
+    loginButton.innerHTML = `<i class="fas fa-upload"></i> ${
+      hasLoginWallpaper ? "Change Login Wallpaper" : "Set Login Wallpaper"
+    }`;
   }
 
   if (profileButton) {
-    profileButton.innerHTML = `<i class="fas fa-upload"></i> ${hasProfile ? "Change Profile Picture" : "Set Profile Picture"
-      }`;
+    profileButton.innerHTML = `<i class="fas fa-upload"></i> ${
+      hasProfile ? "Change Profile Picture" : "Set Profile Picture"
+    }`;
   }
 }
 
@@ -5662,10 +4563,11 @@ function updateFileExplorer() {
               </div>
               <div class="file-main">
                   <div class="file-toolbar">
-                      <button class="editor-btn" onclick="goUpDirectory()" ${currentPath.length === 0
-      ? 'disabled style="opacity:0.5;cursor:not-allowed;"'
-      : ""
-    }>
+                      <button class="editor-btn" onclick="goUpDirectory()" ${
+                        currentPath.length === 0
+                          ? 'disabled style="opacity:0.5;cursor:not-allowed;"'
+                          : ""
+                      }>
                           <i class="fas fa-arrow-up"></i> Up
                       </button>
                       <button class="editor-btn" onclick="createNewFolder()">
@@ -5677,15 +4579,15 @@ function updateFileExplorer() {
                   </div>
       <div class="file-grid">
                               ${Object.keys(current)
-      .sort()
-      .map((file) => {
-        const isFolder =
-          typeof current[file] === "object";
-        const icon = isFolder
-          ? "fa-folder"
-          : "fa-file-alt";
-        const escapedFile = file.replace(/'/g, "\\'");
-        return `
+                                .sort()
+                                .map((file) => {
+                                  const isFolder =
+                                    typeof current[file] === "object";
+                                  const icon = isFolder
+                                    ? "fa-folder"
+                                    : "fa-file-alt";
+                                  const escapedFile = file.replace(/'/g, "\\'");
+                                  return `
                                       <div class="file-item" ondblclick="openFile('${escapedFile}')" onclick="selectFileItem(event, this, '${escapedFile}')" draggable="true" ondragstart="handleFileDragStart(event, '${escapedFile}')" ondragover="handleFileDragOver(event, ${isFolder})" ondrop="handleFileDrop(event, '${escapedFile}')">
                                           <i class="fas ${icon}"></i>
                                           <span>${file}</span>
@@ -5699,8 +4601,8 @@ function updateFileExplorer() {
                                           </div>
                                       </div>
                                   `;
-      })
-      .join("")}
+                                })
+                                .join("")}
                           </div>
               </div>
           `;
@@ -5721,8 +4623,9 @@ function renderFileTree(fs = fileSystem, parentPath = [], level = 0) {
 
       if (isFolder) {
         html += `
-                      <div class="file-tree-item folder ${isActive ? "active" : ""
-          }" onclick="navigateToFolderFromTree('${pathString}')" data-path="${pathString}">
+                      <div class="file-tree-item folder ${
+                        isActive ? "active" : ""
+                      }" onclick="navigateToFolderFromTree('${pathString}')" data-path="${pathString}">
                           <i class="fas fa-chevron-right" onclick="toggleTreeFolder(this.parentElement, '${pathString}', event)" style="cursor: pointer;"></i>
                           <i class="fas fa-folder"></i>
                           <span>${name}</span>
@@ -5733,8 +4636,9 @@ function renderFileTree(fs = fileSystem, parentPath = [], level = 0) {
                   `;
       } else {
         html += `
-                      <div class="file-tree-item ${isActive ? "active" : ""
-          }" onclick="openFileFromTree('${pathString}')" data-path="${pathString}">
+                      <div class="file-tree-item ${
+                        isActive ? "active" : ""
+                      }" onclick="openFileFromTree('${pathString}')" data-path="${pathString}">
                           <i class="fas fa-file-alt"></i>
                           <span>${name}</span>
                       </div>
@@ -5833,7 +4737,7 @@ function moveFileToFolder() {
       window.minimizeWindow =
       window.showToast =
       window.handleTaskbarClick =
-      function () { };
+        function () {};
 
     const elements = document.querySelectorAll("div, body, html, :root");
     elements.forEach((el) => {
@@ -5866,8 +4770,8 @@ function goUpDirectory() {
   }
 }
 
-async function createNewFolder() {
-  const folderName = await prompt("Enter folder name:");
+function createNewFolder() {
+  const folderName = prompt("Enter folder name:");
   if (!folderName) return;
 
   let current = getFileSystemAtPath(currentPath);
@@ -6282,226 +5186,63 @@ function switchAppStoreSection(section, element) {
               </div>
               <div class="appstore-grid">
                   <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-dark-theme">
-                              <div class="illustration-dark-window">
-                                  <div class="illustration-dark-header"></div>
-                                  <div class="illustration-dark-content">
-                                      <div class="illustration-dark-line" style="width: 80%;"></div>
-                                      <div class="illustration-dark-line" style="width: 60%;"></div>
-                                      <div class="illustration-dark-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
+                      <div class="appstore-item-icon">
+                          <i class="fas fa-moon"></i>
                       </div>
                       <div class="appstore-item-name">Dark Theme by dinguschan</div>
-                      <div class="appstore-item-desc">The default NautilusOS theme. Sleek dark interface with teal accents,
-                          perfect for extended use and reducing eye strain.</div>
+                      <div class="appstore-item-desc">The default NautilusOS theme. Sleek dark interface with teal accents, perfect for extended use and reducing eye strain.</div>
                       <button class="appstore-item-btn installed" style="opacity: 0.6; cursor: not-allowed;" disabled>
                           Installed (Default)
                       </button>
                   </div>
                   <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-light-theme">
-                              <div class="illustration-light-window">
-                                  <div class="illustration-light-header"></div>
-                                  <div class="illustration-light-content">
-                                      <div class="illustration-light-line" style="width: 80%;"></div>
-                                      <div class="illustration-light-line" style="width: 60%;"></div>
-                                      <div class="illustration-light-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
+                      <div class="appstore-item-icon">
+                          <i class="fas fa-sun"></i>
                       </div>
                       <div class="appstore-item-name">Light Theme by dinguschan</div>
-                      <div class="appstore-item-desc">A bright and clean theme perfect for daytime use. Easy on the eyes with
-                          light backgrounds and dark text.</div>
+                      <div class="appstore-item-desc">A bright and clean theme perfect for daytime use. Easy on the eyes with light backgrounds and dark text.</div>
                       <button class="appstore-item-btn ${
                         lightThemeInstalled ? "installed" : ""
                       }" onclick="${
-          lightThemeInstalled
-            ? " uninstallTheme('light')"
-            : "installTheme('light')"
-        }">
+      lightThemeInstalled ? "uninstallTheme('light')" : "installTheme('light')"
+    }">
                           ${lightThemeInstalled ? "Uninstall" : "Install"}
                       </button>
                   </div>
                   <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-golden-theme">
-                              <div class="illustration-golden-window">
-                                  <div class="illustration-golden-header"></div>
-                                  <div class="illustration-golden-content">
-                                      <div class="illustration-golden-line" style="width: 80%;"></div>
-                                      <div class="illustration-golden-line" style="width: 60%;"></div>
-                                      <div class="illustration-golden-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
+                      <div class="appstore-item-icon">
+                          <i class="fas fa-crown" style="color: #d4af37;"></i>
                       </div>
                       <div class="appstore-item-name">Golden Theme by lanefiedler-731</div>
-                      <div class="appstore-item-desc">Elegant golden accents with warm, luxurious dark backgrounds. Perfect
-                          for a premium look.</div>
+                      <div class="appstore-item-desc">Elegant golden accents with warm, luxurious dark backgrounds. Perfect for a premium look.</div>
                       <button class="appstore-item-btn ${
-                        installedThemes.includes("golden") ? "installed" : ""
-                      }"
-                          onclick="${
-                            installedThemes.includes("golden")
-                              ? "uninstallTheme('golden')"
-                              : "installTheme('golden')"
-                          }">
-                          ${
-                            installedThemes.includes("golden")
-                              ? "Uninstall"
-                              : "Install"
-                          }
+                        installedThemes.includes('golden') ? "installed" : ""
+                      }" onclick="${installedThemes.includes('golden') ? "uninstallTheme('golden')" : "installTheme('golden')"}">
+                          ${installedThemes.includes('golden') ? "Uninstall" : "Install"}
                       </button>
                   </div>
                   <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-red-theme">
-                              <div class="illustration-red-window">
-                                  <div class="illustration-red-header"></div>
-                                  <div class="illustration-red-content">
-                                      <div class="illustration-red-line" style="width: 80%;"></div>
-                                      <div class="illustration-red-line" style="width: 60%;"></div>
-                                      <div class="illustration-red-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
+                      <div class="appstore-item-icon">
+                          <i class="fas fa-fire" style="color: #ef4444;"></i>
                       </div>
                       <div class="appstore-item-name">Red Theme by lanefiedler-731</div>
-                      <div class="appstore-item-desc">Bold and vibrant red accents for those who want to stand out. Energy
-                          meets elegance.</div>
+                      <div class="appstore-item-desc">Bold and vibrant red accents for those who want to stand out. Energy meets elegance.</div>
                       <button class="appstore-item-btn ${
-                        installedThemes.includes("red") ? "installed" : ""
-                      }"
-                          onclick="${
-                            installedThemes.includes("red")
-                              ? "uninstallTheme('red')"
-                              : "installTheme('red')"
-                          }">
-                          ${installedThemes.includes("red") ? "Uninstall" : "Install"}
+                        installedThemes.includes('red') ? "installed" : ""
+                      }" onclick="${installedThemes.includes('red') ? "uninstallTheme('red')" : "installTheme('red')"}">
+                          ${installedThemes.includes('red') ? "Uninstall" : "Install"}
                       </button>
                   </div>
                   <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-blue-theme">
-                              <div class="illustration-blue-window">
-                                  <div class="illustration-blue-header"></div>
-                                  <div class="illustration-blue-content">
-                                      <div class="illustration-blue-line" style="width: 80%;"></div>
-                                      <div class="illustration-blue-line" style="width: 60%;"></div>
-                                      <div class="illustration-blue-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
+                      <div class="appstore-item-icon">
+                          <i class="fas fa-droplet" style="color: #3b82f6;"></i>
                       </div>
                       <div class="appstore-item-name">Blue Theme by lanefiedler-731</div>
-                      <div class="appstore-item-desc">Cool and calming blue tones. Professional and soothing for extended use.
-                      </div>
+                      <div class="appstore-item-desc">Cool and calming blue tones. Professional and soothing for extended use.</div>
                       <button class="appstore-item-btn ${
-                        installedThemes.includes("blue") ? "installed" : ""
-                      }"
-                          onclick="${
-                            installedThemes.includes("blue")
-                              ? "uninstallTheme('blue')"
-                              : "installTheme('blue')"
-                          }">
-                          ${
-                            installedThemes.includes("blue") ? "Uninstall" : "Install"
-                          }
-                      </button>
-                  </div>
-                  <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-purple-theme">
-                              <div class="illustration-purple-window">
-                                  <div class="illustration-purple-header"></div>
-                                  <div class="illustration-purple-content">
-                                      <div class="illustration-purple-line" style="width: 80%;"></div>
-                                      <div class="illustration-purple-line" style="width: 60%;"></div>
-                                      <div class="illustration-purple-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
-                      </div>
-                      <div class="appstore-item-name">Purple Theme by lanefiedler-731</div>
-                      <div class="appstore-item-desc">Deep shades combined with royal hues, crafted together for the perfect purple theme.</div>
-                      <button class="appstore-item-btn ${
-                        installedThemes.includes("purple") ? "installed" : ""
-                      }"
-                          onclick="${
-                            installedThemes.includes("purple")
-                              ? "uninstallTheme('purple')"
-                              : "installTheme('purple')"
-                          }">
-                          ${
-                            installedThemes.includes("purple")
-                              ? "Uninstall"
-                              : "Install"
-                          }
-                      </button>
-                  </div>
-                  <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-green-theme">
-                              <div class="illustration-green-window">
-                                  <div class="illustration-green-header"></div>
-                                  <div class="illustration-green-content">
-                                      <div class="illustration-green-line" style="width: 80%;"></div>
-                                      <div class="illustration-green-line" style="width: 60%;"></div>
-                                      <div class="illustration-green-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
-                      </div>
-                      <div class="appstore-item-name">Green Theme by lanefiedler-731</div>
-                      <div class="appstore-item-desc">Rich shades of green with splashes of lime and seaweed, this is quite the exquisite theme.</div>
-                      <button class="appstore-item-btn ${
-                        installedThemes.includes("green") ? "installed" : ""
-                      }"
-                          onclick="${
-                            installedThemes.includes("green")
-                              ? "uninstallTheme('green')"
-                              : "installTheme('green')"
-                          }">
-                          ${
-                            installedThemes.includes("green")
-                              ? "Uninstall"
-                              : "Install"
-                          }
-                      </button>
-                  </div>
-                  <div class="appstore-item">
-                      <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
-                          <div class="illustration-liquidglass-theme">
-                              <div class="illustration-liquidglass-window">
-                                  <div class="illustration-liquidglass-header"></div>
-                                  <div class="illustration-liquidglass-content">
-                                      <div class="illustration-liquidglass-line" style="width: 80%;"></div>
-                                      <div class="illustration-liquidglass-line" style="width: 60%;"></div>
-                                      <div class="illustration-liquidglass-line" style="width: 90%;"></div>
-                                  </div>
-                              </div>
-                          </div>
-                      </div>
-                      <div class="appstore-item-name">Liquid Glass by $xor</div>
-                      <div class="appstore-item-desc">An Apple insipired theme with a beautiful translucent look.</div>
-                      <button class="appstore-item-btn ${
-                        installedThemes.includes("liquidGlass") ? "installed" : ""
-                      }"
-                          onclick="${
-                            installedThemes.includes("liquidGlass")
-                              ? "uninstallTheme('liquidGlass')"
-                              : "installTheme('liquidGlass')"
-                          }">
-                          ${
-                            installedThemes.includes("liquidGlass")
-                              ? "Uninstall"
-                              : "Install"
-                          }
+                        installedThemes.includes('blue') ? "installed" : ""
+                      }" onclick="${installedThemes.includes('blue') ? "uninstallTheme('blue')" : "installTheme('blue')"}">
+                          ${installedThemes.includes('blue') ? "Uninstall" : "Install"}
                       </button>
                   </div>
               </div>
@@ -6513,7 +5254,6 @@ function switchAppStoreSection(section, element) {
     const uvInstalled = installedApps.includes("uv");
     const heliosInstalled = installedApps.includes("helios");
     const vscInstalled = installedApps.includes("vsc");
-    const v86Installed = installedApps.includes("v86-emulator");
 
     mainContent.innerHTML = `
                   <div class="appstore-header">
@@ -6555,7 +5295,7 @@ function switchAppStoreSection(section, element) {
     }">
 ${startupInstalled ? "Uninstall" : "Install"}
 </button>
-<div class="offline-support" style="top: -90%;"><i class="fa-solid fa-file"></i> OFFLINE SUPPORT</div>
+<div class="offline-support"><i class="fa-solid fa-check"></i> OFFLINE SUPPORT</div>
 </div>
 <div class="appstore-item">
    <div style="margin-bottom: 1rem; display: flex; justify-content: center;">
@@ -6600,6 +5340,7 @@ ${startupInstalled ? "Uninstall" : "Install"}
     }">
    ${taskmanagerInstalled ? "Uninstall" : "Install"}
    </button>
+   <div class="offline-support"><i class="fa-solid fa-check"></i> OFFLINE SUPPORT</div>
 </div>
 <div class="appstore-item">
    <div class="appstore-item-icon">
@@ -6616,6 +5357,7 @@ ${startupInstalled ? "Uninstall" : "Install"}
     }">
    ${snapManagerInstalled ? "Uninstall" : "Install"}
    </button>
+   <div class="offline-support"><i class="fa-solid fa-check"></i> OFFLINE SUPPORT</div>
 </div>
 <div class="appstore-item">
    <div class="appstore-item-icon">
@@ -6651,34 +5393,10 @@ ${startupInstalled ? "Uninstall" : "Install"}
    <div class="appstore-item-desc">The developer's choice for text editing, now on NautilusOS.</div>
    <button class="appstore-item-btn ${
      vscInstalled ? "installed" : ""
-   }" onclick="${vscInstalled ? "uninstallApp('vsc')" : "installApp('vsc')"}">
-   ${vscInstalled ? "Uninstall" : "Install"}
-   </button>
-</div>
-<div class="appstore-item">
-   <div class="appstore-item-icon">
-      <i class="fas fa-microchip"></i>
-   </div>
-   <div class="appstore-item-name">V86 Emulator by lanefiedler-731</div>
-   <div class="appstore-item-desc">Run x86 operating systems and software within NautilusOS. Experience virtualized computing with full system emulation.</div>
-   <button class="appstore-item-btn ${
-     v86Installed ? "installed" : ""
    }" onclick="${
-      v86Installed
-        ? "uninstallApp('v86-emulator')"
-        : "installApp('v86-emulator')"
+      vscInstalled ? "uninstallApp('vsc')" : "installApp('vsc')"
     }">
-   ${v86Installed ? "Uninstall" : "Install"}
-   </button>
-</div>
-<div class="appstore-item">
-   <div class="appstore-item-icon">
-      <i class="fas fa-robot"></i>
-   </div>
-   <div class="appstore-item-name">Nautilus AI Assistant by lanefiedler-731</div>
-   <div class="appstore-item-desc">Your personal AI assistant powered by WebLLM. Get instant help with NautilusOS features, apps, settings, and more. Runs entirely in your browser with no server required!</div>
-   <button class="appstore-item-btn installed" onclick="openApp('nautilus-ai')">
-      Open
+   ${vscInstalled ? "Uninstall" : "Install"}
    </button>
 </div>
 </div>
@@ -6705,12 +5423,9 @@ ${startupInstalled ? "Uninstall" : "Install"}
         ? "openApp('snake')"
         : "installGame('snake')"
     }">
-                          ${
-                            installedGames.includes("snake")
-                              ? "Play"
-                              : "Install"
-                          }
+                          ${installedGames.includes("snake") ? "Play" : "Install"}
                       </button>
+                      <div class="offline-support"><i class="fa-solid fa-check"></i> OFFLINE SUPPORT</div>
                   </div>
                   
                   <div class="appstore-item">
@@ -6726,10 +5441,9 @@ ${startupInstalled ? "Uninstall" : "Install"}
         ? "openApp('2048')"
         : "installGame('2048')"
     }">
-                          ${
-                            installedGames.includes("2048") ? "Play" : "Install"
-                          }
+                          ${installedGames.includes("2048") ? "Play" : "Install"}
                       </button>
+                      <div class="offline-support"><i class="fa-solid fa-check"></i> OFFLINE SUPPORT</div>
                   </div>
                   
                   <div class="appstore-item">
@@ -6745,22 +5459,9 @@ ${startupInstalled ? "Uninstall" : "Install"}
         ? "openApp('tictactoe')"
         : "installGame('tictactoe')"
     }">
-                          ${
-                            installedGames.includes("tictactoe")
-                              ? "Play"
-                              : "Install"
-                          }
+                          ${installedGames.includes("tictactoe") ? "Play" : "Install"}
                       </button>
-                  </div>
-                  <div class="appstore-item">
-                      <div class="appstore-item-icon">
-                          <i class="fas fa-brain"></i>
-                      </div>
-                      <div class="appstore-item-name">AI Snake Learning by lanefiedler-731</div>
-                      <div class="appstore-item-desc">Train an AI neural network to play Snake using Deep Q-Learning. Watch it learn and improve with GPU acceleration, customizable concurrency, game speed, and training speed controls.</div>
-                      <button class="appstore-item-btn installed" onclick="openApp('ai-snake')">
-                          Play
-                      </button>
+                      <div class="offline-support"><i class="fa-solid fa-check"></i> OFFLINE SUPPORT</div>
                   </div>
               </div>
           `;
@@ -6778,7 +5479,7 @@ function installTheme(themeName) {
     JSON.stringify(installedThemes)
   );
   showToast("Theme installed! Go to Settings to apply it.", "fa-check-circle");
-
+  
   unlockAchievement("theme-changer");
 
   refreshAppStore();
@@ -6799,22 +5500,26 @@ function uninstallTheme(themeName) {
 }
 
 const themeDefinitions = {
-  dark: { url: "/style.css" },
-  light: { url: "/themes/light.css" },
-  golden: { url: "/themes/golden.css" },
-  red: { url: "/themes/red.css" },
-  blue: { url: "/themes/blue.css" },
-  purple: { url: "/themes/purple.css" },
-  green: { url: "/themes/green.css" },
-  liquidGlass: { url: "/themes/lg.css" },
+  dark: { accent: "#7dd3c0", accentHover: "#6bc4b0", accentDark: "#469483", bgPrimary: "#0a0e1a", bgSecondary: "#151923", textPrimary: "#e8eaed", textSecondary: "#9aa0a6", border: "#7dd3c0" },
+  light: { accent: "#06b6d4", accentHover: "#0891b2", accentDark: "#0d9488", bgPrimary: "#f8fafc", bgSecondary: "#ffffff", textPrimary: "#ffffff", textSecondary: "#475569", border: "#e2e8f0" },
+  golden: { accent: "#d4af37", accentHover: "#c9a227", accentDark: "#997618", bgPrimary: "#1a1410", bgSecondary: "#2d2417", textPrimary: "#f5e6d3", textSecondary: "#b8a88a", border: "#d4af37" },
+  red: { accent: "#ef4444", accentHover: "#dc2626", accentDark: "#991b1b", bgPrimary: "#1a0f0f", bgSecondary: "#2d1818", textPrimary: "#ffe8e8", textSecondary: "#cc9999", border: "#ef4444" },
+  blue: { accent: "#3b82f6", accentHover: "#2563eb", accentDark: "#1e40af", bgPrimary: "#0f1419", bgSecondary: "#1a2332", textPrimary: "#e0e7ff", textSecondary: "#94a3b8", border: "#3b82f6" },
+  purple: { accent: "#a855f7", accentHover: "#9333ea", accentDark: "#7e22ce", bgPrimary: "#1a0f2e", bgSecondary: "#2d1b47", textPrimary: "#f3e8ff", textSecondary: "#d8b4fe", border: "#a855f7" },
+  green: { accent: "#10b981", accentHover: "#059669", accentDark: "#047857", bgPrimary: "#0f2e1b", bgSecondary: "#1a3d2a", textPrimary: "#d1fae5", textSecondary: "#a7f3d0", border: "#10b981" },
 };
 
 function applyTheme(themeName) {
   const theme = themeDefinitions[themeName];
-  const themeLink = document.getElementById("themeLink")
   if (!theme) { console.warn("Theme not found:", themeName); return; }
-  console.log(themeLink)
-  themeLink.href = theme.url
+  document.documentElement.style.setProperty("--accent", theme.accent);
+  document.documentElement.style.setProperty("--accent-hover", theme.accentHover);
+  document.documentElement.style.setProperty("--accent-dark", theme.accentDark);
+  document.documentElement.style.setProperty("--bg-primary", theme.bgPrimary);
+  document.documentElement.style.setProperty("--bg-secondary", theme.bgSecondary);
+  document.documentElement.style.setProperty("--text-primary", theme.textPrimary);
+  document.documentElement.style.setProperty("--text-secondary", theme.textSecondary);
+  document.documentElement.style.setProperty("--border", theme.border);
   localStorage.setItem("nautilusOS_currentTheme", themeName);
   appliedThemeName = themeName;
 }
@@ -7512,193 +6217,6 @@ function calcBackspace() {
 
   display.textContent = calcCurrentValue;
 }
-
-// ========== PYTHON INTERPRETER FUNCTIONS ==========
-
-// Simple Python interpreter using eval (simulated)
-function runPythonCode() {
-  const editor = document.getElementById("pythonCodeEditor");
-  const output = document.getElementById("pythonOutput");
-  
-  if (!editor || !output) {
-    showToast("Python interpreter not ready", "fa-exclamation-circle");
-    return;
-  }
-  
-  const code = editor.value;
-  output.innerHTML = '<div style="color: var(--text-secondary); margin-bottom: 0.5rem;"><i class="fas fa-play"></i> Running...</div>';
-  
-  // Simulated Python execution
-  try {
-    let outputLines = [];
-    let printOutput = [];
-    
-    // Create a simulated Python environment
-    const pythonEnv = {
-      print: (...args) => {
-        printOutput.push(args.map(String).join(' '));
-      },
-      len: (arr) => arr.length,
-      sum: (arr) => arr.reduce((a, b) => a + b, 0),
-      range: (start, end, step = 1) => {
-        const arr = [];
-        if (end === undefined) {
-          end = start;
-          start = 0;
-        }
-        for (let i = start; i < end; i += step) {
-          arr.push(i);
-        }
-        return arr;
-      },
-      abs: Math.abs,
-      max: Math.max,
-      min: Math.min,
-      round: Math.round,
-      str: String,
-      int: parseInt,
-      float: parseFloat,
-      list: (arr) => Array.from(arr),
-    };
-    
-    // Convert Python-like syntax to JavaScript
-    let jsCode = code
-      .replace(/print\(/g, 'pythonEnv.print(')
-      .replace(/len\(/g, 'pythonEnv.len(')
-      .replace(/sum\(/g, 'pythonEnv.sum(')
-      .replace(/range\(/g, 'pythonEnv.range(')
-      .replace(/abs\(/g, 'pythonEnv.abs(')
-      .replace(/max\(/g, 'pythonEnv.max(')
-      .replace(/min\(/g, 'pythonEnv.min(')
-      .replace(/round\(/g, 'pythonEnv.round(')
-      .replace(/#.*$/gm, '//')  // Convert comments
-      .replace(/def\s+(\w+)\s*\((.*?)\)\s*:/g, 'function $1($2) {')  // Convert function definitions
-      .replace(/for\s+(\w+)\s+in\s+(.*?):/g, 'for (let $1 of $2) {')  // Convert for loops
-      .replace(/if\s+(.*?):/g, 'if ($1) {')  // Convert if statements
-      .replace(/elif\s+(.*?):/g, '} else if ($1) {')  // Convert elif
-      .replace(/else:/g, '} else {')  // Convert else
-      .replace(/True/g, 'true')  // Convert True
-      .replace(/False/g, 'false')  // Convert False
-      .replace(/None/g, 'null');  // Convert None
-    
-    // Count indentation-based blocks and add closing braces
-    const lines = jsCode.split('\n');
-    let indentStack = [0];
-    let processedLines = [];
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmedLine = line.trim();
-      
-      if (trimmedLine === '' || trimmedLine.startsWith('//')) {
-        processedLines.push(line);
-        continue;
-      }
-      
-      const indent = line.search(/\S/);
-      const currentIndent = indent === -1 ? 0 : indent;
-      
-      // Close blocks if dedenting
-      while (indentStack.length > 1 && currentIndent < indentStack[indentStack.length - 1]) {
-        indentStack.pop();
-        processedLines.push(' '.repeat(indentStack[indentStack.length - 1]) + '}');
-      }
-      
-      processedLines.push(line);
-      
-      // Track indentation for blocks
-      if (trimmedLine.endsWith('{')) {
-        indentStack.push(currentIndent);
-      }
-    }
-    
-    // Close remaining blocks
-    while (indentStack.length > 1) {
-      indentStack.pop();
-      processedLines.push('}');
-    }
-    
-    jsCode = processedLines.join('\n');
-    
-    // Execute the code
-    const func = new Function('pythonEnv', jsCode);
-    func(pythonEnv);
-    
-    // Display output
-    if (printOutput.length > 0) {
-      output.innerHTML = printOutput.map(line => 
-        `<div class="python-output-line">${escapeHtml(line)}</div>`
-      ).join('');
-    } else {
-      output.innerHTML = '<div style="color: var(--success-green);"><i class="fas fa-check-circle"></i> Code executed successfully (no output)</div>';
-    }
-    
-  } catch (error) {
-    output.innerHTML = `<div style="color: var(--error-red);"><i class="fas fa-exclamation-circle"></i> Error: ${escapeHtml(error.message)}</div>`;
-  }
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-function clearPythonOutput() {
-  const output = document.getElementById("pythonOutput");
-  if (output) {
-    output.innerHTML = '';
-  }
-}
-
-function savePythonFile() {
-  const editor = document.getElementById("pythonCodeEditor");
-  const filenameInput = document.getElementById("pythonFilename");
-  
-  if (!editor || !filenameInput) return;
-  
-  const filename = filenameInput.value || 'script.py';
-  const code = editor.value;
-  
-  // Save to file system
-  const folder = getFileSystemAtPath(["Python"]);
-  if (!folder) {
-    // Create Python folder if it doesn't exist
-    fileSystem.Python = {};
-  }
-  
-  fileSystem.Python[filename] = code;
-  showToast(`Saved ${filename}`, "fa-check-circle");
-}
-
-function loadPythonFile() {
-  const filenameInput = document.getElementById("pythonFilename");
-  if (!filenameInput) return;
-  
-  const filename = filenameInput.value;
-  if (!filename) {
-    showToast("Please enter a filename", "fa-exclamation-circle");
-    return;
-  }
-  
-  const folder = getFileSystemAtPath(["Python"]);
-  if (!folder || !folder[filename]) {
-    showToast("File not found", "fa-exclamation-circle");
-    return;
-  }
-  
-  const editor = document.getElementById("pythonCodeEditor");
-  if (editor) {
-    editor.value = folder[filename];
-    showToast(`Loaded ${filename}`, "fa-check-circle");
-  }
-}
-
-// Support opening Python files with double-click
-function openPythonFile(filename, content) {
-  openApp("python", content, filename);
-}
-
 let notificationHistory = [];
 
 function toggleNotificationCenter() {
@@ -7829,8 +6347,8 @@ function updatePhotosApp() {
   content.innerHTML = `
               <div class="photos-grid" id="photosGrid">
                   ${photoList
-      .map(
-        (name) => `
+                    .map(
+                      (name) => `
                       <div class="photo-item" onclick="viewPhoto('${name}')">
                           <img src="${photos[name]}" alt="${name}" class="photo-thumbnail">
                           <div class="photo-name">${name}</div>
@@ -7839,8 +6357,8 @@ function updatePhotosApp() {
                           </button>
                       </div>
                   `
-      )
-      .join("")}
+                    )
+                    .join("")}
               </div>
           `;
 }
@@ -8112,12 +6630,12 @@ function setupComplete() {
 
   currentUsername = username;
 
-  if (selectedThemes.length > 0) {
+   if (selectedThemes.length > 0) {
     setTimeout(() => {
       unlockAchievement("theme-changer");
     }, 100);
   }
-
+  
   let welcomeMessage = "Setup complete! Welcome to NautilusOS";
   let toastIcon = "fa-check-circle";
   if (username.toLowerCase() === "dinguschan") {
@@ -8375,13 +6893,10 @@ async function changeuser() {
   const newUsername = await prompt("Enter a new username:");
   if (!newUsername) {
     showToast("Username change cancelled", "fa-info-circle");
-    return;
   } else if (newUsername.length < 3) {
     showToast("Username must be at least 3 characters", "fa-exclamation-circle");
-    return
   } else if (newUsername === currentUsername) {
-    showToast("New username cannot be the same as the current one", "fa-exclamation-circle");
-    return
+    showToast("New username cannot be the same as the current one", "fa-info-circle");
   };
 
   showToast("Username changed successfully. Reloading...", "fa-check-circle");
@@ -8414,19 +6929,22 @@ function showModal(options) {
     inputContainer.innerHTML = "";
 
     if (options.prompt) {
-      inputContainer.innerHTML = `<input type="text" class="modal-input" id="modalInput" placeholder="${options.placeholder || ""
-        }" value="${options.defaultValue || ""}">`;
+      inputContainer.innerHTML = `<input type="text" class="modal-input" id="modalInput" placeholder="${
+        options.placeholder || ""
+      }" value="${options.defaultValue || ""}">`;
       setTimeout(() => document.getElementById("modalInput").focus(), 100);
     }
 
     if (options.confirm) {
       buttons.innerHTML = `
                       <button class="modal-btn modal-btn-secondary" onclick="closeModal(false)">Cancel</button>
-                      <button class="modal-btn ${options.danger
-          ? "modal-btn-danger"
-          : "modal-btn-primary"
-        }" onclick="confirmModal()">${options.confirmText || "OK"
-        }</button>
+                      <button class="modal-btn ${
+                        options.danger
+                          ? "modal-btn-danger"
+                          : "modal-btn-primary"
+                      }" onclick="confirmModal()">${
+        options.confirmText || "OK"
+      }</button>
                   `;
     } else {
       buttons.innerHTML = `
@@ -8545,8 +7063,6 @@ function installApp(appName) {
     updateSnapOverlayStyles();
   }
 
-  // V86 resources will be loaded on-demand when the app is opened
-
   showToast(
     "App installed! Check your desktop and start menu to launch it.",
     "fa-check-circle"
@@ -8576,11 +7092,6 @@ function uninstallApp(appName) {
       snapSettings.enabled = false;
       saveSnapSettings();
       hideSnapPreview();
-    }
-
-    if (appName === "v86-emulator") {
-      // Clean up V86 resources when uninstalling
-      cleanupV86Resources();
     }
 
     showToast("App uninstalled", "fa-trash");
@@ -8646,10 +7157,10 @@ function loadInstalledGames() {
 let snakeGame = {
   canvas: null,
   ctx: null,
-  snake: [{ x: 10, y: 10 }],
-  food: { x: 15, y: 15 },
-  direction: { x: 1, y: 0 },
-  nextDirection: { x: 1, y: 0 },
+  snake: [{x: 10, y: 10}],
+  food: {x: 15, y: 15},
+  direction: {x: 1, y: 0},
+  nextDirection: {x: 1, y: 0},
   score: 0,
   gameRunning: false,
   gamePaused: false,
@@ -8665,22 +7176,22 @@ function startSnakeGame() {
     snakeGame.canvas = document.getElementById('snakeCanvas');
     snakeGame.ctx = snakeGame.canvas.getContext('2d');
   }
-
+  
   if (snakeGame.gameRunning && !snakeGame.gamePaused) {
     return;
   }
-
+  
   if (!snakeGame.gameRunning) {
-    snakeGame.snake = [{ x: 10, y: 10 }];
+    snakeGame.snake = [{x: 10, y: 10}];
     snakeGame.food = generateFood();
-    snakeGame.direction = { x: 1, y: 0 };
-    snakeGame.nextDirection = { x: 1, y: 0 };
+    snakeGame.direction = {x: 1, y: 0};
+    snakeGame.nextDirection = {x: 1, y: 0};
     snakeGame.score = 0;
     snakeGame.gameOver = false;
     snakeGame.gameRunning = true;
     document.getElementById('snakeScore').textContent = '0';
     document.getElementById('snakeStartBtn').textContent = 'Pause';
-
+    
     attachSnakeKeyListeners();
     gameLoop();
   } else if (snakeGame.gamePaused) {
@@ -8696,7 +7207,7 @@ function attachSnakeKeyListeners() {
 
 function handleSnakeKeyPress(e) {
   if (!snakeGame.gameRunning) return;
-
+  
   if (e.key === ' ') {
     e.preventDefault();
     snakeGame.gamePaused = !snakeGame.gamePaused;
@@ -8704,24 +7215,24 @@ function handleSnakeKeyPress(e) {
     if (!snakeGame.gamePaused) gameLoop();
     return;
   }
-
+  
   if (e.key === 'r' || e.key === 'R') {
     startSnakeGame();
     return;
   }
-
+  
   const key = e.key.toLowerCase();
   if (key === 'arrowup' || key === 'w') {
-    if (snakeGame.direction.y === 0) snakeGame.nextDirection = { x: 0, y: -1 };
+    if (snakeGame.direction.y === 0) snakeGame.nextDirection = {x: 0, y: -1};
     e.preventDefault();
   } else if (key === 'arrowdown' || key === 's') {
-    if (snakeGame.direction.y === 0) snakeGame.nextDirection = { x: 0, y: 1 };
+    if (snakeGame.direction.y === 0) snakeGame.nextDirection = {x: 0, y: 1};
     e.preventDefault();
   } else if (key === 'arrowleft' || key === 'a') {
-    if (snakeGame.direction.x === 0) snakeGame.nextDirection = { x: -1, y: 0 };
+    if (snakeGame.direction.x === 0) snakeGame.nextDirection = {x: -1, y: 0};
     e.preventDefault();
   } else if (key === 'arrowright' || key === 'd') {
-    if (snakeGame.direction.x === 0) snakeGame.nextDirection = { x: 1, y: 0 };
+    if (snakeGame.direction.x === 0) snakeGame.nextDirection = {x: 1, y: 0};
     e.preventDefault();
   }
 }
@@ -8743,22 +7254,22 @@ function gameLoop() {
   if (!snakeGame.gameRunning || snakeGame.gamePaused || snakeGame.gameOver) {
     return;
   }
-
+  
   snakeGame.direction = snakeGame.nextDirection;
-
+  
   const head = snakeGame.snake[0];
   const newHead = {
     x: (head.x + snakeGame.direction.x + snakeGame.tileCount) % snakeGame.tileCount,
     y: (head.y + snakeGame.direction.y + snakeGame.tileCount) % snakeGame.tileCount
   };
-
+  
   if (snakeGame.snake.some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
     endSnakeGame();
     return;
   }
-
+  
   snakeGame.snake.unshift(newHead);
-
+  
   if (newHead.x === snakeGame.food.x && newHead.y === snakeGame.food.y) {
     snakeGame.score += 10;
     document.getElementById('snakeScore').textContent = snakeGame.score;
@@ -8766,7 +7277,7 @@ function gameLoop() {
   } else {
     snakeGame.snake.pop();
   }
-
+  
   drawSnakeGame();
   setTimeout(gameLoop, snakeGame.gameSpeed);
 }
@@ -8774,17 +7285,17 @@ function gameLoop() {
 function drawSnakeGame() {
   const canvas = snakeGame.canvas;
   const ctx = snakeGame.ctx;
-
+  
   if (!canvas || !ctx) return;
-
+  
   const bgSecondary = getComputedStyle(document.documentElement).getPropertyValue('--bg-secondary').trim();
   const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
   const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
   const errorRed = getComputedStyle(document.documentElement).getPropertyValue('--error-red').trim();
-
+  
   ctx.fillStyle = bgSecondary;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+  
   ctx.strokeStyle = 'rgba(125, 211, 192, 0.1)';
   ctx.lineWidth = 0.5;
   for (let i = 0; i <= snakeGame.tileCount; i++) {
@@ -8793,13 +7304,13 @@ function drawSnakeGame() {
     ctx.moveTo(pos, 0);
     ctx.lineTo(pos, canvas.height);
     ctx.stroke();
-
+    
     ctx.beginPath();
     ctx.moveTo(0, pos);
     ctx.lineTo(canvas.width, pos);
     ctx.stroke();
   }
-
+  
   snakeGame.snake.forEach((segment, index) => {
     if (index === 0) {
       ctx.fillStyle = accentColor;
@@ -8813,7 +7324,7 @@ function drawSnakeGame() {
       snakeGame.gridSize - 4
     );
   });
-
+  
   ctx.fillStyle = errorRed;
   ctx.beginPath();
   ctx.arc(
@@ -8828,709 +7339,18 @@ function drawSnakeGame() {
 function endSnakeGame() {
   snakeGame.gameRunning = false;
   snakeGame.gameOver = true;
-
+  
   if (snakeGame.score > snakeGame.highScore) {
     snakeGame.highScore = snakeGame.score;
     localStorage.setItem('snakeHighScore', snakeGame.highScore);
     document.getElementById('snakeHighScore').textContent = snakeGame.highScore;
   }
-
+  
   document.getElementById('snakeStartBtn').textContent = 'Start Game';
-
+  
   document.removeEventListener('keydown', handleSnakeKeyPress);
-
+  
   showToast('Game Over! Score: ' + snakeGame.score + ' | High Score: ' + snakeGame.highScore, 'fa-skull');
-}
-
-// ========== AI Snake Learning Implementation ==========
-let aiSnake = {
-  model: null,
-  targetModel: null,
-  canvas: null,
-  ctx: null,
-  games: [],
-  memory: [],
-  isTraining: false,
-  isPaused: false,
-  generation: 0,
-  bestScore: 0,
-  gamesPlayed: 0,
-  scores: [],
-  epsilon: 1.0,
-  epsilonMin: 0.01,
-  epsilonDecay: 0.995,
-  learningRate: 0.001,
-  batchSize: 64,
-  memorySize: 10000,
-  gridSize: 20,
-  tileCount: 20,
-  gameSpeed: 10,
-  trainingSpeed: 10,
-  concurrency: 5,
-  useGPU: true,
-  deviceInfo: null
-};
-
-// Initialize AI Snake App
-async function initializeAISnakeApp() {
-  if (typeof tf === 'undefined') {
-    updateAITrainingStatus('Loading TensorFlow.js...');
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    if (typeof tf === 'undefined') {
-      updateAITrainingStatus('Error: TensorFlow.js failed to load. Please refresh the page.');
-      return;
-    }
-  }
-
-  aiSnake.canvas = document.getElementById('aiSnakeCanvas');
-  if (!aiSnake.canvas) return;
-  
-  aiSnake.ctx = aiSnake.canvas.getContext('2d');
-  
-  // Check GPU support
-  try {
-    await tf.ready();
-    aiSnake.deviceInfo = tf.getBackend();
-    const useGPU = document.getElementById('aiUseGPU');
-    if (useGPU) {
-      const useGPUValue = localStorage.getItem('aiSnakeUseGPU');
-      if (useGPUValue !== null) {
-        useGPU.checked = useGPUValue === 'true';
-      }
-      aiSnake.useGPU = useGPU.checked;
-      
-      if (aiSnake.useGPU && aiSnake.deviceInfo === 'webgl') {
-        document.getElementById('aiGPUStatus').textContent = 'GPU: WebGL Active';
-        document.getElementById('aiGPUStatus').style.color = '#4ade80';
-      } else if (aiSnake.useGPU && aiSnake.deviceInfo === 'webgpu') {
-        document.getElementById('aiGPUStatus').textContent = 'GPU: WebGPU Active';
-        document.getElementById('aiGPUStatus').style.color = '#4ade80';
-      } else {
-        document.getElementById('aiGPUStatus').textContent = `GPU: ${aiSnake.deviceInfo} (CPU Fallback)`;
-        document.getElementById('aiGPUStatus').style.color = '#ffaa00';
-      }
-    }
-  } catch (e) {
-    document.getElementById('aiGPUStatus').textContent = 'GPU: CPU Only';
-    document.getElementById('aiGPUStatus').style.color = '#ef4444';
-  }
-
-  // Load saved state
-  loadAISnakeState();
-
-  // Setup UI handlers
-  setupAISnakeUIHandlers();
-
-  // Create neural network model
-  await createAISnakeModel();
-
-  updateAITrainingStatus('Ready to start training. Click "Start Training" to begin.');
-}
-
-// Setup UI event handlers
-function setupAISnakeUIHandlers() {
-  const gameSpeedSlider = document.getElementById('aiGameSpeed');
-  const trainingSpeedSlider = document.getElementById('aiTrainingSpeed');
-  const concurrencySlider = document.getElementById('aiConcurrency');
-  const gpuCheckbox = document.getElementById('aiUseGPU');
-
-  if (gameSpeedSlider) {
-    gameSpeedSlider.addEventListener('input', (e) => {
-      aiSnake.gameSpeed = parseInt(e.target.value);
-      document.getElementById('aiGameSpeedValue').textContent = aiSnake.gameSpeed;
-      localStorage.setItem('aiSnakeGameSpeed', aiSnake.gameSpeed);
-      
-      // Update interval if training is running
-      if (aiSnake.isTraining && aiGameInterval) {
-        clearInterval(aiGameInterval);
-        aiGameInterval = setInterval(() => {
-          if (!aiSnake.isPaused) {
-            runAITrainingCycle().catch(err => {
-              console.error('Training error:', err);
-              updateAITrainingStatus('Error during training: ' + err.message);
-            });
-          }
-        }, aiSnake.gameSpeed);
-      }
-    });
-  }
-
-  if (trainingSpeedSlider) {
-    trainingSpeedSlider.addEventListener('input', (e) => {
-      aiSnake.trainingSpeed = parseInt(e.target.value);
-      document.getElementById('aiTrainingSpeedValue').textContent = aiSnake.trainingSpeed;
-      localStorage.setItem('aiSnakeTrainingSpeed', aiSnake.trainingSpeed);
-    });
-  }
-
-  if (concurrencySlider) {
-    concurrencySlider.addEventListener('input', (e) => {
-      aiSnake.concurrency = parseInt(e.target.value);
-      document.getElementById('aiConcurrencyValue').textContent = aiSnake.concurrency;
-      localStorage.setItem('aiSnakeConcurrency', aiSnake.concurrency);
-    });
-  }
-
-  if (gpuCheckbox) {
-    gpuCheckbox.addEventListener('change', (e) => {
-      aiSnake.useGPU = e.target.checked;
-      localStorage.setItem('aiSnakeUseGPU', aiSnake.useGPU);
-      if (aiSnake.useGPU && aiSnake.deviceInfo === 'webgl') {
-        document.getElementById('aiGPUStatus').textContent = 'GPU: WebGL Active';
-        document.getElementById('aiGPUStatus').style.color = '#4ade80';
-      } else {
-        document.getElementById('aiGPUStatus').textContent = `GPU: ${aiSnake.deviceInfo}`;
-        document.getElementById('aiGPUStatus').style.color = '#ffaa00';
-      }
-    });
-  }
-}
-
-// Create Deep Q-Network model
-async function createAISnakeModel() {
-  if (aiSnake.model) {
-    aiSnake.model.dispose();
-  }
-  if (aiSnake.targetModel) {
-    aiSnake.targetModel.dispose();
-  }
-
-  // Input: 24 features (game state)
-  // Output: 4 actions (up, down, left, right)
-  const model = tf.sequential({
-    layers: [
-      tf.layers.dense({ inputShape: [24], units: 128, activation: 'relu' }),
-      tf.layers.dense({ units: 128, activation: 'relu' }),
-      tf.layers.dense({ units: 64, activation: 'relu' }),
-      tf.layers.dense({ units: 4, activation: 'linear' })
-    ]
-  });
-
-  model.compile({
-    optimizer: tf.train.adam(aiSnake.learningRate),
-    loss: 'meanSquaredError'
-  });
-
-  aiSnake.model = model;
-  aiSnake.targetModel = model.clone();
-  
-  updateAITrainingStatus('Neural network model created successfully.');
-}
-
-// Get game state as feature vector
-function getGameState(game) {
-  const head = game.snake[0];
-  const features = [];
-
-  // Danger straight, right, left
-  const directions = [
-    game.direction,
-    { x: -game.direction.y, y: game.direction.x }, // right
-    { x: game.direction.y, y: -game.direction.x }  // left
-  ];
-
-  directions.forEach(dir => {
-    const nextPos = { x: head.x + dir.x, y: head.y + dir.y };
-    const danger = (
-      nextPos.x < 0 || nextPos.x >= aiSnake.tileCount ||
-      nextPos.y < 0 || nextPos.y >= aiSnake.tileCount ||
-      game.snake.some(segment => segment.x === nextPos.x && segment.y === nextPos.y)
-    ) ? 1 : 0;
-    features.push(danger);
-  });
-
-  // Current direction (one-hot encoded)
-  features.push(game.direction.x === 0 && game.direction.y === -1 ? 1 : 0); // up
-  features.push(game.direction.x === 0 && game.direction.y === 1 ? 1 : 0);  // down
-  features.push(game.direction.x === -1 && game.direction.y === 0 ? 1 : 0); // left
-  features.push(game.direction.x === 1 && game.direction.y === 0 ? 1 : 0);  // right
-
-  // Food direction (normalized)
-  const foodDeltaX = game.food.x - head.x;
-  const foodDeltaY = game.food.y - head.y;
-  features.push(foodDeltaX > 0 ? 1 : (foodDeltaX < 0 ? -1 : 0));
-  features.push(foodDeltaY > 0 ? 1 : (foodDeltaY < 0 ? -1 : 0));
-
-  // Normalized distances
-  features.push(foodDeltaX / aiSnake.tileCount);
-  features.push(foodDeltaY / aiSnake.tileCount);
-
-  // Snake length (normalized)
-  features.push(game.snake.length / (aiSnake.tileCount * aiSnake.tileCount));
-
-  // Additional features: distances to walls
-  features.push(head.x / aiSnake.tileCount);
-  features.push(head.y / aiSnake.tileCount);
-  features.push((aiSnake.tileCount - head.x) / aiSnake.tileCount);
-  features.push((aiSnake.tileCount - head.y) / aiSnake.tileCount);
-
-  // Body proximity (check immediate surroundings)
-  for (let dx = -1; dx <= 1; dx++) {
-    for (let dy = -1; dy <= 1; dy++) {
-      if (dx === 0 && dy === 0) continue;
-      const checkPos = { x: head.x + dx, y: head.y + dy };
-      const hasBody = game.snake.some(segment => segment.x === checkPos.x && segment.y === checkPos.y);
-      features.push(hasBody ? 1 : 0);
-    }
-  }
-
-  return features.slice(0, 24); // Ensure exactly 24 features
-}
-
-// Create a new game instance
-function createAIGame() {
-  return {
-    snake: [{ x: 10, y: 10 }],
-    food: { x: 15, y: 15 },
-    direction: { x: 1, y: 0 },
-    score: 0,
-    steps: 0,
-    gameOver: false,
-    lastFoodDistance: Infinity
-  };
-}
-
-// Generate food position
-function generateAIFood(game) {
-  let newFood;
-  let foodOnSnake = true;
-  while (foodOnSnake) {
-    newFood = {
-      x: Math.floor(Math.random() * aiSnake.tileCount),
-      y: Math.floor(Math.random() * aiSnake.tileCount)
-    };
-    foodOnSnake = game.snake.some(segment => segment.x === newFood.x && segment.y === newFood.y);
-  }
-  return newFood;
-}
-
-// Perform action in game
-function performAIAction(game, action) {
-  if (game.gameOver) return;
-
-  // Actions: 0=up, 1=down, 2=left, 3=right
-  const directions = [
-    { x: 0, y: -1 }, // up
-    { x: 0, y: 1 },  // down
-    { x: -1, y: 0 }, // left
-    { x: 1, y: 0 }   // right
-  ];
-
-  const newDirection = directions[action];
-  // Prevent reversing
-  if (newDirection.x === -game.direction.x && newDirection.y === -game.direction.y) {
-    return;
-  }
-
-  game.direction = newDirection;
-  const head = game.snake[0];
-  const newHead = {
-    x: (head.x + game.direction.x + aiSnake.tileCount) % aiSnake.tileCount,
-    y: (head.y + game.direction.y + aiSnake.tileCount) % aiSnake.tileCount
-  };
-
-  // Check collision
-  if (game.snake.some(segment => segment.x === newHead.x && segment.y === newHead.y)) {
-    game.gameOver = true;
-    return;
-  }
-
-  game.snake.unshift(newHead);
-  game.steps++;
-
-  // Check food
-  if (newHead.x === game.food.x && newHead.y === game.food.y) {
-    game.score += 10;
-    game.food = generateAIFood(game);
-    game.lastFoodDistance = Infinity;
-  } else {
-    game.snake.pop();
-    const foodDist = Math.abs(game.food.x - newHead.x) + Math.abs(game.food.y - newHead.y);
-    game.lastFoodDistance = foodDist;
-  }
-
-  // Penalty for too many steps without eating
-  if (game.steps > 200 && game.score === 0) {
-    game.gameOver = true;
-  }
-}
-
-// Predict action using model
-async function predictAction(game) {
-  const state = getGameState(game);
-  const stateTensor = tf.tensor2d([state]);
-  
-  try {
-    const prediction = await aiSnake.model.predict(stateTensor);
-    const qValues = await prediction.data();
-    prediction.dispose();
-    stateTensor.dispose();
-    
-    // Epsilon-greedy exploration
-    if (Math.random() < aiSnake.epsilon) {
-      return Math.floor(Math.random() * 4);
-    }
-    
-    return qValues.indexOf(Math.max(...qValues));
-  } catch (e) {
-    stateTensor.dispose();
-    return Math.floor(Math.random() * 4);
-  }
-}
-
-// Train the model
-async function trainAIModel() {
-  if (aiSnake.memory.length < aiSnake.batchSize) {
-    return;
-  }
-
-  const batch = [];
-  const sampleIndices = [];
-  for (let i = 0; i < aiSnake.batchSize; i++) {
-    sampleIndices.push(Math.floor(Math.random() * aiSnake.memory.length));
-  }
-
-  const states = [];
-  const targets = [];
-
-  for (const idx of sampleIndices) {
-    const { state, action, reward, nextState, done } = aiSnake.memory[idx];
-    
-    const stateTensor = tf.tensor2d([state]);
-    const currentQ = await aiSnake.model.predict(stateTensor);
-    const currentQValues = await currentQ.data();
-    currentQ.dispose();
-    stateTensor.dispose();
-
-    let targetQ = [...currentQValues];
-
-    if (done) {
-      targetQ[action] = reward;
-    } else {
-      const nextStateTensor = tf.tensor2d([nextState]);
-      const nextQ = await aiSnake.targetModel.predict(nextStateTensor);
-      const nextQValues = await nextQ.data();
-      nextQ.dispose();
-      nextStateTensor.dispose();
-      
-      targetQ[action] = reward + 0.95 * Math.max(...nextQValues);
-    }
-
-    states.push(state);
-    targets.push(targetQ);
-  }
-
-  const xs = tf.tensor2d(states);
-  const ys = tf.tensor2d(targets);
-
-  await aiSnake.model.fit(xs, ys, {
-    epochs: 1,
-    batchSize: aiSnake.batchSize,
-    verbose: 0
-  });
-
-  xs.dispose();
-  ys.dispose();
-}
-
-// Draw game on canvas
-function drawAISnakeGame(game) {
-  if (!aiSnake.canvas || !aiSnake.ctx) return;
-
-  const ctx = aiSnake.ctx;
-  const gridSize = aiSnake.canvas.width / aiSnake.tileCount;
-
-  ctx.fillStyle = '#0f0f0f';
-  ctx.fillRect(0, 0, aiSnake.canvas.width, aiSnake.canvas.height);
-
-  // Draw grid
-  ctx.strokeStyle = '#1a3a3a';
-  ctx.lineWidth = 0.5;
-  for (let i = 0; i <= aiSnake.tileCount; i++) {
-    const pos = i * gridSize;
-    ctx.beginPath();
-    ctx.moveTo(pos, 0);
-    ctx.lineTo(pos, aiSnake.canvas.height);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, pos);
-    ctx.lineTo(aiSnake.canvas.width, pos);
-    ctx.stroke();
-  }
-
-  // Draw snake
-  game.snake.forEach((segment, index) => {
-    ctx.fillStyle = index === 0 ? '#00ff00' : '#00cc00';
-    ctx.fillRect(
-      segment.x * gridSize + 1,
-      segment.y * gridSize + 1,
-      gridSize - 2,
-      gridSize - 2
-    );
-  });
-
-  // Draw food
-  ctx.fillStyle = '#ff4444';
-  ctx.fillRect(
-    game.food.x * gridSize + 1,
-    game.food.y * gridSize + 1,
-    gridSize - 2,
-    gridSize - 2
-  );
-}
-
-// Main training loop
-let aiTrainingInterval = null;
-let aiGameInterval = null;
-
-async function runAITrainingCycle() {
-  if (!aiSnake.isTraining || aiSnake.isPaused) return;
-
-  // Update concurrency
-  while (aiSnake.games.length < aiSnake.concurrency) {
-    aiSnake.games.push(createAIGame());
-  }
-  while (aiSnake.games.length > aiSnake.concurrency) {
-    aiSnake.games.pop();
-  }
-
-  // Run games
-  for (let i = 0; i < aiSnake.games.length; i++) {
-    const game = aiSnake.games[i];
-    if (game.gameOver) {
-      // Store final state
-      const state = getGameState(game);
-      const reward = game.score * 10 - game.steps;
-      aiSnake.memory.push({
-        state: state,
-        action: 0, // placeholder
-        reward: reward,
-        nextState: state,
-        done: true
-      });
-
-      // Update statistics
-      aiSnake.gamesPlayed++;
-      aiSnake.scores.push(game.score);
-      if (game.score > aiSnake.bestScore) {
-        aiSnake.bestScore = game.score;
-        localStorage.setItem('aiSnakeBestScore', aiSnake.bestScore);
-      }
-
-      // Limit memory size
-      if (aiSnake.memory.length > aiSnake.memorySize) {
-        aiSnake.memory.shift();
-      }
-
-      // Create new game
-      aiSnake.games[i] = createAIGame();
-    } else {
-      // Get action from model
-      const action = await predictAction(game);
-      const state = getGameState(game);
-      const oldScore = game.score;
-
-      performAIAction(game, action);
-
-      if (!game.gameOver) {
-        const nextState = getGameState(game);
-        const reward = (game.score > oldScore ? 10 : 0) - 0.1; // small penalty for each step
-        const foodDist = Math.abs(game.food.x - game.snake[0].x) + Math.abs(game.food.y - game.snake[0].y);
-        const oldFoodDist = game.lastFoodDistance || Infinity;
-        const distanceReward = (oldFoodDist - foodDist) * 0.1;
-
-        aiSnake.memory.push({
-          state: state,
-          action: action,
-          reward: reward + distanceReward,
-          nextState: nextState,
-          done: false
-        });
-
-        // Limit memory size
-        if (aiSnake.memory.length > aiSnake.memorySize) {
-          aiSnake.memory.shift();
-        }
-      }
-    }
-  }
-
-  // Draw first game
-  if (aiSnake.games.length > 0) {
-    drawAISnakeGame(aiSnake.games[0]);
-  }
-
-  // Train model
-  for (let i = 0; i < aiSnake.trainingSpeed; i++) {
-    await trainAIModel();
-  }
-
-  // Update target model periodically
-  if (aiSnake.gamesPlayed % 100 === 0 && aiSnake.gamesPlayed > 0) {
-    if (aiSnake.targetModel) {
-      aiSnake.targetModel.dispose();
-    }
-    aiSnake.targetModel = aiSnake.model.clone();
-  }
-
-  // Decay epsilon
-  if (aiSnake.epsilon > aiSnake.epsilonMin) {
-    aiSnake.epsilon *= aiSnake.epsilonDecay;
-  }
-
-  // Update UI
-  updateAIUI();
-}
-
-// Update UI elements
-function updateAIUI() {
-  document.getElementById('aiGeneration').textContent = aiSnake.generation;
-  document.getElementById('aiBestScore').textContent = aiSnake.bestScore;
-  document.getElementById('aiCurrentScore').textContent = aiSnake.games.length > 0 ? aiSnake.games[0].score : 0;
-  document.getElementById('aiGamesPlayed').textContent = aiSnake.gamesPlayed;
-  document.getElementById('aiEpsilon').textContent = aiSnake.epsilon.toFixed(2);
-  
-  if (aiSnake.scores.length > 0) {
-    const avg = aiSnake.scores.slice(-100).reduce((a, b) => a + b, 0) / Math.min(100, aiSnake.scores.length);
-    document.getElementById('aiAvgScore').textContent = avg.toFixed(1);
-  }
-
-  const status = aiSnake.isTraining 
-    ? `Training... Generation ${aiSnake.generation} | Games: ${aiSnake.gamesPlayed} | Best: ${aiSnake.bestScore} | Epsilon: ${aiSnake.epsilon.toFixed(3)}`
-    : 'Training paused';
-  updateAITrainingStatus(status);
-}
-
-function updateAITrainingStatus(message) {
-  const statusEl = document.getElementById('aiTrainingStatus');
-  if (statusEl) {
-    statusEl.textContent = message;
-  }
-}
-
-// Start training
-async function startAISnakeTraining() {
-  if (aiSnake.isTraining) return;
-
-  if (!aiSnake.model) {
-    await createAISnakeModel();
-  }
-
-  aiSnake.isTraining = true;
-  aiSnake.isPaused = false;
-  
-  document.getElementById('aiStartBtn').style.display = 'none';
-  document.getElementById('aiPauseBtn').style.display = 'block';
-
-  // Initialize games
-  aiSnake.games = [];
-  for (let i = 0; i < aiSnake.concurrency; i++) {
-    aiSnake.games.push(createAIGame());
-  }
-
-  // Start game loop
-  aiGameInterval = setInterval(() => {
-    if (!aiSnake.isPaused) {
-      runAITrainingCycle().catch(err => {
-        console.error('Training error:', err);
-        updateAITrainingStatus('Error during training: ' + err.message);
-      });
-    }
-  }, aiSnake.gameSpeed);
-
-  updateAITrainingStatus('Training started!');
-  aiSnake.generation++;
-  saveAISnakeState();
-}
-
-// Pause training
-function pauseAISnakeTraining() {
-  aiSnake.isPaused = !aiSnake.isPaused;
-  
-  if (aiSnake.isPaused) {
-    document.getElementById('aiPauseBtn').textContent = 'Resume';
-    updateAITrainingStatus('Training paused.');
-  } else {
-    document.getElementById('aiPauseBtn').textContent = 'Pause';
-    updateAITrainingStatus('Training resumed.');
-  }
-}
-
-// Reset model
-async function resetAISnakeModel() {
-  if (confirm('Reset AI model? All training progress will be lost.')) {
-    aiSnake.isTraining = false;
-    aiSnake.isPaused = false;
-    
-    if (aiGameInterval) {
-      clearInterval(aiGameInterval);
-      aiGameInterval = null;
-    }
-
-    document.getElementById('aiStartBtn').style.display = 'block';
-    document.getElementById('aiPauseBtn').style.display = 'none';
-
-    aiSnake.generation = 0;
-    aiSnake.bestScore = 0;
-    aiSnake.gamesPlayed = 0;
-    aiSnake.scores = [];
-    aiSnake.epsilon = 1.0;
-    aiSnake.memory = [];
-    aiSnake.games = [];
-
-    await createAISnakeModel();
-    updateAIUI();
-    updateAITrainingStatus('Model reset. Ready to start training.');
-    
-    localStorage.removeItem('aiSnakeState');
-    saveAISnakeState();
-  }
-}
-
-// Save/Load state
-function saveAISnakeState() {
-  const state = {
-    generation: aiSnake.generation,
-    bestScore: aiSnake.bestScore,
-    gamesPlayed: aiSnake.gamesPlayed,
-    epsilon: aiSnake.epsilon,
-    gameSpeed: aiSnake.gameSpeed,
-    trainingSpeed: aiSnake.trainingSpeed,
-    concurrency: aiSnake.concurrency
-  };
-  localStorage.setItem('aiSnakeState', JSON.stringify(state));
-}
-
-function loadAISnakeState() {
-  const saved = localStorage.getItem('aiSnakeState');
-  if (saved) {
-    const state = JSON.parse(saved);
-    aiSnake.generation = state.generation || 0;
-    aiSnake.bestScore = parseInt(localStorage.getItem('aiSnakeBestScore')) || 0;
-    aiSnake.gamesPlayed = state.gamesPlayed || 0;
-    aiSnake.epsilon = state.epsilon || 1.0;
-    aiSnake.gameSpeed = parseInt(localStorage.getItem('aiSnakeGameSpeed')) || 10;
-    aiSnake.trainingSpeed = parseInt(localStorage.getItem('aiSnakeTrainingSpeed')) || 10;
-    aiSnake.concurrency = parseInt(localStorage.getItem('aiSnakeConcurrency')) || 5;
-  }
-
-  // Update UI sliders
-  const gameSpeedSlider = document.getElementById('aiGameSpeed');
-  const trainingSpeedSlider = document.getElementById('aiTrainingSpeed');
-  const concurrencySlider = document.getElementById('aiConcurrency');
-  
-  if (gameSpeedSlider) {
-    gameSpeedSlider.value = aiSnake.gameSpeed;
-    document.getElementById('aiGameSpeedValue').textContent = aiSnake.gameSpeed;
-  }
-  if (trainingSpeedSlider) {
-    trainingSpeedSlider.value = aiSnake.trainingSpeed;
-    document.getElementById('aiTrainingSpeedValue').textContent = aiSnake.trainingSpeed;
-  }
-  if (concurrencySlider) {
-    concurrencySlider.value = aiSnake.concurrency;
-    document.getElementById('aiConcurrencyValue').textContent = aiSnake.concurrency;
-  }
 }
 
 
@@ -9561,20 +7381,8 @@ function addDesktopIcon(appName) {
     iconConfig = { icon: "fa-globe", label: "Helios" };
   } else if (appName === "vsc") {
     iconConfig = { icon: "fa-code", label: "Visual Studio Code" };
-  } else if (appName === "v86-emulator") {
-    iconConfig = { icon: "fa-microchip", label: "V86 Emulator" };
-  } else if (appName === "ai-snake") {
-    iconConfig = { icon: "fa-brain", label: "AI Snake Learning" };
-  } else if (appName === "nautilus-ai") {
-    iconConfig = { icon: "fa-robot", label: "Nautilus AI Assistant" };
   } else {
-    // Try to get from appMetadata
-    const metadata = appMetadata[appName];
-    if (metadata) {
-      iconConfig = { icon: metadata.icon, label: metadata.name };
-    } else {
-      return;
-    }
+    return;
   }
 
   const iconEl = document.createElement("div");
@@ -9614,7 +7422,7 @@ function openStartupApps() {
     { id: "achievements", name: "Achievements", icon: "fa-trophy" },
   ];
 
-  const installedAppsData = [];
+const installedAppsData = [];
   installedApps.forEach((appName) => {
     if (appName === "startup-apps") {
       installedAppsData.push({ id: "startup-apps", name: "Startup Apps", icon: "fa-rocket" });
@@ -9635,7 +7443,7 @@ function openStartupApps() {
     }
   });
 
-  const availableApps = [...preinstalledApps, ...installedAppsData];
+  const availableApps = [...preinstalledApps, ...installedAppsData]; 
 
   const itemsHtml = availableApps
     .map((app) => {
@@ -9653,16 +7461,19 @@ function openStartupApps() {
                       </div>
                       <div class="startup-item-info">
                           <div class="startup-item-name">${app.name}</div>
-                          <div class="startup-item-status">${isWhatsNew
-          ? "Managed in Settings"
-          : isEnabled
-            ? "Enabled"
-            : "Disabled"
-        }</div>
+                          <div class="startup-item-status">${
+                            isWhatsNew
+                              ? "Managed in Settings"
+                              : isEnabled
+                              ? "Enabled"
+                              : "Disabled"
+                          }</div>
                       </div>
-                      <div class="toggle-switch ${isEnabled ? "active" : ""
-        } ${disabled}" ${toggleAction} style="${isWhatsNew ? "opacity: 0.5; cursor: not-allowed;" : ""
-        }"></div>
+                      <div class="toggle-switch ${
+                        isEnabled ? "active" : ""
+                      } ${disabled}" ${toggleAction} style="${
+        isWhatsNew ? "opacity: 0.5; cursor: not-allowed;" : ""
+      }"></div>
                   </div>
               `;
     })
@@ -9679,8 +7490,9 @@ function openStartupApps() {
                       <div class="startup-item-name">What's New</div>
                       <div class="startup-item-status">Managed in Settings</div>
                   </div>
-                  <div class="toggle-switch ${whatsNewEnabled ? "active" : ""
-    }" style="opacity: 0.5; cursor: not-allowed;"></div>
+                  <div class="toggle-switch ${
+                    whatsNewEnabled ? "active" : ""
+                  }" style="opacity: 0.5; cursor: not-allowed;"></div>
               </div>
           `;
 
@@ -9756,13 +7568,16 @@ function toggleStartupApp(appId) {
                                   <i class="fas ${app.icon}"></i>
                               </div>
                               <div class="startup-item-info">
-                                  <div class="startup-item-name">${app.name
-            }</div>
-                                  <div class="startup-item-status">${isEnabled ? "Enabled" : "Disabled"
-            }</div>
+                                  <div class="startup-item-name">${
+                                    app.name
+                                  }</div>
+                                  <div class="startup-item-status">${
+                                    isEnabled ? "Enabled" : "Disabled"
+                                  }</div>
                               </div>
-                              <div class="toggle-switch ${isEnabled ? "active" : ""
-            }" onclick="toggleStartupApp('${app.id}')"></div>
+                              <div class="toggle-switch ${
+                                isEnabled ? "active" : ""
+                              }" onclick="toggleStartupApp('${app.id}')"></div>
                           </div>
                       `;
         })
@@ -9779,8 +7594,9 @@ function toggleStartupApp(appId) {
                               <div class="startup-item-name">What's New</div>
                               <div class="startup-item-status">Managed in Settings</div>
                           </div>
-                          <div class="toggle-switch ${whatsNewEnabled ? "active" : ""
-        }" style="opacity: 0.5; cursor: not-allowed;"></div>
+                          <div class="toggle-switch ${
+                            whatsNewEnabled ? "active" : ""
+                          }" style="opacity: 0.5; cursor: not-allowed;"></div>
                       </div>
                   `;
 
@@ -9842,10 +7658,11 @@ function openTaskManager() {
 
                   <div class="taskmanager-section">
                       <h3><i class="fas fa-window-maximize"></i> Running Applications</h3>
-                      ${windowCount === 0
-      ? '<p style="color: var(--text-secondary); text-align: center; padding: 2rem;">No applications running</p>'
-      : processesHtml
-    }
+                      ${
+                        windowCount === 0
+                          ? '<p style="color: var(--text-secondary); text-align: center; padding: 2rem;">No applications running</p>'
+                          : processesHtml
+                      }
                   </div>
 
                   <div class="taskmanager-section">
@@ -9921,10 +7738,11 @@ function refreshTaskManager() {
                 
                 <div class="taskmanager-section">
                     <h3><i class="fas fa-window-maximize"></i> Running Applications</h3>
-                    ${windowCount === 0
-        ? '<p style="color: var(--text-secondary); text-align: center; padding: 2rem;">No applications running</p>'
-        : processesHtml
-      }
+                    ${
+                      windowCount === 0
+                        ? '<p style="color: var(--text-secondary); text-align: center; padding: 2rem;">No applications running</p>'
+                        : processesHtml
+                    }
                 </div>
                 
                 <div class="taskmanager-section">
@@ -10024,7 +7842,7 @@ function initStartMenuSearch() {
   }
 
   searchInput.dataset.listenerAdded = 'true';
-  searchInput.addEventListener('input', function () {
+  searchInput.addEventListener('input', function() {
     const searchTerm = this.value.toLowerCase();
     const appItems = document.querySelectorAll('.app-item');
 
@@ -10104,7 +7922,7 @@ function updateStartMenu() {
   initStartMenuSearch();
 }
 
-async function exportProfile() {
+function exportProfile() {
   const profile = {
     version: "1.0",
     username: localStorage.getItem("nautilusOS_username"),
@@ -10127,7 +7945,7 @@ async function exportProfile() {
   profile.useSameBackground = useSame === null ? "true" : useSame;
   profile.profilePicture = profilePicture || null;
 
-  const profileJson = await encryption.encrypt(profile);
+  const profileJson = JSON.stringify(profile, null, 2);
   const blob = new Blob([profileJson], { type: "application/json" });
   const url = URL.createObjectURL(blob);
 
@@ -10143,196 +7961,7 @@ async function exportProfile() {
   URL.revokeObjectURL(url);
   showToast("Profile exported successfully!", "fa-check-circle");
 }
-
-// ========== ACCOUNT MANAGER FUNCTIONS ==========
-
-function openAccountManager() {
-  const accounts = getAllAccounts();
-  
-  const accountListHTML = accounts.map(acc => `
-    <div class="account-manager-item" style="padding: 1rem; background: rgba(30, 35, 48, 0.6); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 0.75rem;">
-      <div style="display: flex; align-items: center; justify-content: space-between;">
-        <div style="flex: 1;">
-          <div style="color: var(--text-primary); font-family: fontb; margin-bottom: 0.25rem; display: flex; align-items: center; gap: 0.5rem;">
-            <i class="fas fa-user"></i>
-            ${acc.username}
-            ${acc.role === "superuser" ? '<span style="background: var(--accent); color: var(--bg-primary); padding: 0.15rem 0.5rem; border-radius: 5px; font-size: 0.75rem; margin-left: 0.5rem;">SUPER USER</span>' : ''}
-          </div>
-          <div style="color: var(--text-secondary); font-size: 0.85rem;">
-            ${acc.isPasswordless ? 'Passwordless Account' : 'Password Protected'} • Created ${new Date(acc.createdAt).toLocaleDateString()}
-          </div>
-        </div>
-        <div style="display: flex; gap: 0.5rem;">
-          <button class="settings-action-btn" onclick="editAccountPermissions('${acc.username}')" style="padding: 0.5rem 0.75rem;">
-            <i class="fas fa-key"></i> Permissions
-          </button>
-          ${acc.username !== currentUsername ? `
-          <button class="settings-action-btn" onclick="deleteAccountConfirm('${acc.username}')" style="padding: 0.5rem 0.75rem; background: var(--error-red); border-color: var(--error-red);">
-            <i class="fas fa-trash"></i>
-          </button>
-          ` : ''}
-        </div>
-      </div>
-    </div>
-  `).join('');
-  
-  showModal({
-    type: "info",
-    icon: "fa-users-cog",
-    title: "Account Management",
-    message: `
-      <div style="max-height: 400px; overflow-y: auto; margin-bottom: 1rem;">
-        ${accountListHTML}
-      </div>
-      <button class="cloaking-btn primary" onclick="closeModal(); openCreateAccountDialog()" style="width: 100%;">
-        <i class="fas fa-user-plus"></i> Create New Account
-      </button>
-    `,
-    confirm: false
-  });
-}
-
-function openCreateAccountDialog() {
-  showModal({
-    type: "info",
-    icon: "fa-user-plus",
-    title: "Create New Account",
-    message: `
-      <div style="display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1rem;">
-        <div>
-          <label style="display: block; color: var(--text-primary); font-size: 0.9rem; margin-bottom: 0.5rem;">Username</label>
-          <input type="text" id="newAccountUsername" class="login-input" placeholder="Enter username" style="width: 100%;">
-        </div>
-        <div>
-          <label style="display: block; color: var(--text-primary); font-size: 0.9rem; margin-bottom: 0.5rem;">Password</label>
-          <input type="password" id="newAccountPassword" class="login-input" placeholder="Enter password" style="width: 100%;">
-        </div>
-        <div>
-          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-            <input type="checkbox" id="newAccountPasswordless">
-            <span style="color: var(--text-primary);">Passwordless Account</span>
-          </label>
-        </div>
-        <div>
-          <label style="display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-            <input type="checkbox" id="newAccountSuperUser">
-            <span style="color: var(--text-primary);">Super User (Full Permissions)</span>
-          </label>
-        </div>
-      </div>
-    `,
-    confirm: true,
-    confirmText: "Create Account",
-    cancelText: "Cancel"
-  }).then(result => {
-    if (result) {
-      const username = document.getElementById("newAccountUsername").value;
-      const password = document.getElementById("newAccountPassword").value;
-      const isPasswordless = document.getElementById("newAccountPasswordless").checked;
-      const isSuperUser = document.getElementById("newAccountSuperUser").checked;
-      
-      if (!username) {
-        showToast("Username is required", "fa-exclamation-circle");
-        return;
-      }
-      
-      if (!isPasswordless && !password) {
-        showToast("Password is required for non-passwordless accounts", "fa-exclamation-circle");
-        return;
-      }
-      
-      const result = createAccount(username, password, isSuperUser ? "superuser" : "standard", isPasswordless);
-      
-      if (result.success) {
-        showToast(result.message, "fa-check-circle");
-        openAccountManager();
-      } else {
-        showToast(result.message, "fa-exclamation-circle");
-      }
-    }
-  });
-}
-
-function editAccountPermissions(username) {
-  const account = getAccountByUsername(username);
-  if (!account) {
-    showToast("Account not found", "fa-exclamation-circle");
-    return;
-  }
-  
-  // Get all available apps
-  const allApps = Object.keys(appMetadata);
-  const allowedApps = account.allowedApps || [];
-  
-  const appCheckboxes = allApps.map(appKey => {
-    const app = appMetadata[appKey];
-    const isAllowed = allowedApps.length === 0 || allowedApps.includes(appKey);
-    return `
-      <label style="display: flex; align-items: center; gap: 0.75rem; padding: 0.75rem; background: rgba(30, 35, 48, 0.4); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; margin-bottom: 0.5rem;">
-        <input type="checkbox" class="app-permission-checkbox" value="${appKey}" ${isAllowed ? 'checked' : ''}>
-        <i class="fas ${app.icon}" style="color: var(--accent);"></i>
-        <span style="color: var(--text-primary);">${app.name}</span>
-      </label>
-    `;
-  }).join('');
-  
-  showModal({
-    type: "info",
-    icon: "fa-key",
-    title: `Permissions for ${username}`,
-    message: `
-      <p style="color: var(--text-secondary); margin-bottom: 1rem;">Select which apps this user can access. If none are selected, all apps are allowed.</p>
-      <div style="max-height: 300px; overflow-y: auto;">
-        ${appCheckboxes}
-      </div>
-    `,
-    confirm: true,
-    confirmText: "Save Permissions",
-    cancelText: "Cancel"
-  }).then(result => {
-    if (result) {
-      const checkboxes = document.querySelectorAll('.app-permission-checkbox');
-      const selectedApps = Array.from(checkboxes)
-        .filter(cb => cb.checked)
-        .map(cb => cb.value);
-      
-      // If all apps are selected, set to empty array (meaning all allowed)
-      const updatedAllowedApps = selectedApps.length === allApps.length ? [] : selectedApps;
-      
-      updateAccount(username, { allowedApps: updatedAllowedApps });
-      showToast(`Permissions updated for ${username}`, "fa-check-circle");
-      
-      // If updating current user, reload their account
-      if (username === currentUsername) {
-        currentUserAccount = getAccountByUsername(username);
-      }
-    }
-  });
-}
-
-function deleteAccountConfirm(username) {
-  showModal({
-    type: "warning",
-    icon: "fa-exclamation-triangle",
-    title: "Delete Account",
-    message: `Are you sure you want to delete the account "${username}"? This action cannot be undone.`,
-    confirm: true,
-    confirmText: "Delete",
-    cancelText: "Cancel"
-  }).then(result => {
-    if (result) {
-      const delResult = deleteAccount(username);
-      if (delResult.success) {
-        showToast(delResult.message, "fa-check-circle");
-        openAccountManager();
-      } else {
-        showToast(delResult.message, "fa-exclamation-circle");
-      }
-    }
-  });
-}
-
-async function importProfile(event) {
+function importProfile(event) {
   const file = event.target.files[0];
   if (!file) return;
 
@@ -10347,7 +7976,7 @@ async function importProfile(event) {
   const reader = new FileReader();
   reader.onload = async function (e) {
     try {
-      const profile = await encryption.decrypt(e.target.result);
+      const profile = JSON.parse(e.target.result);
 
       if (!profile.version || !profile.username) {
         throw new Error("Invalid profile format");
@@ -10355,14 +7984,14 @@ async function importProfile(event) {
 
       const confirmed = await confirm(
         `Import profile for user "${profile.username}"?<br><br>` +
-        `This will replace your current settings and data.<br><br>` +
-        `<strong>Profile Details:</strong><br>` +
-        `• Username: ${profile.username}<br>` +
-        `• Exported: ${new Date(
-          profile.exportDate
-        ).toLocaleDateString()}<br>` +
-        `• Installed Apps: ${(profile.installedApps || []).length}<br>` +
-        `• Installed Themes: ${(profile.installedThemes || []).length}`
+          `This will replace your current settings and data.<br><br>` +
+          `<strong>Profile Details:</strong><br>` +
+          `• Username: ${profile.username}<br>` +
+          `• Exported: ${new Date(
+            profile.exportDate
+          ).toLocaleDateString()}<br>` +
+          `• Installed Apps: ${(profile.installedApps || []).length}<br>` +
+          `• Installed Themes: ${(profile.installedThemes || []).length}`
       );
 
       if (!confirmed) {
@@ -10372,19 +8001,19 @@ async function importProfile(event) {
 
       localStorage.setItem("nautilusOS_username", profile.username);
       localStorage.setItem("nautilusOS_password", profile.password || "");
-
-      const isPasswordless = profile.isPasswordless !== undefined
-        ? String(profile.isPasswordless)
+      
+      const isPasswordless = profile.isPasswordless !== undefined 
+        ? String(profile.isPasswordless) 
         : (profile.password === "" ? "true" : "false");
       localStorage.setItem("nautilusOS_isPasswordless", isPasswordless);
-
+      
       localStorage.setItem("nautilusOS_setupComplete", "true");
-
+      
       settings = profile.settings || settings;
       installedThemes = profile.installedThemes || [];
       installedApps = profile.installedApps || [];
       startupApps = profile.startupApps || [];
-
+      
       localStorage.setItem(
         "nautilusOS_settings",
         JSON.stringify(settings)
@@ -10401,7 +8030,7 @@ async function importProfile(event) {
         "nautilusOS_startupApps",
         JSON.stringify(startupApps)
       );
-
+      
       if (profile.useSameBackground !== null && profile.useSameBackground !== undefined) {
         localStorage.setItem(
           "nautilusOS_useSameBackground",
@@ -10410,13 +8039,13 @@ async function importProfile(event) {
       } else {
         localStorage.removeItem("nautilusOS_useSameBackground");
       }
-
+      
       if (profile.wallpaper) {
         localStorage.setItem("nautilusOS_wallpaper", profile.wallpaper);
       } else {
         localStorage.removeItem("nautilusOS_wallpaper");
       }
-
+      
       if (profile.loginWallpaper) {
         localStorage.setItem(
           "nautilusOS_loginBackground",
@@ -10425,7 +8054,7 @@ async function importProfile(event) {
       } else {
         localStorage.removeItem("nautilusOS_loginBackground");
       }
-
+      
       if (profile.profilePicture) {
         localStorage.setItem("nautilusOS_profilePicture", profile.profilePicture);
       } else {
@@ -10443,9 +8072,9 @@ async function importProfile(event) {
         }
         fileSystem = cleanedFileSystem;
       }
-
+      
       checkImportedAchievements();
-
+      
       applyUserBackgrounds();
       applyProfilePicture();
       initializeAppearanceSettings();
@@ -10756,36 +8385,42 @@ function refreshAchievementsWindow() {
         : "";
 
       return `
-            <div class="achievement-card ${achievement.unlocked ? "unlocked" : "locked"
-        }">
+            <div class="achievement-card ${
+              achievement.unlocked ? "unlocked" : "locked"
+            }">
                 <div class="achievement-icon">
                     <i class="fas ${achievement.icon}"></i>
-                    ${achievement.unlocked
-          ? '<div class="achievement-badge">✓</div>'
-          : ""
-        }
+                    ${
+                      achievement.unlocked
+                        ? '<div class="achievement-badge">✓</div>'
+                        : ""
+                    }
                 </div>
-                <div class="achievement-name">${achievement.unlocked ? achievement.name : "???"
-        }</div>
-                <div class="achievement-description">${achievement.unlocked
-          ? achievement.description
-          : "Locked - Keep exploring to unlock!"
-        }</div>
-                ${hasProgress && !achievement.unlocked
-          ? `
+                <div class="achievement-name">${
+                  achievement.unlocked ? achievement.name : "???"
+                }</div>
+                <div class="achievement-description">${
+                  achievement.unlocked
+                    ? achievement.description
+                    : "Locked - Keep exploring to unlock!"
+                }</div>
+                ${
+                  hasProgress && !achievement.unlocked
+                    ? `
                     <div class="achievement-progress">
                         <div class="achievement-progress-bar" style="width: ${progressPercent}%"></div>
                     </div>
                     <div class="achievement-date">${progressText}</div>
                 `
-          : ""
-        }
-                ${achievement.unlocked
-          ? `<div class="achievement-date">Unlocked: ${new Date(
-            achievement.unlockedDate
-          ).toLocaleDateString()}</div>`
-          : ""
-        }
+                    : ""
+                }
+                ${
+                  achievement.unlocked
+                    ? `<div class="achievement-date">Unlocked: ${new Date(
+                        achievement.unlockedDate
+                      ).toLocaleDateString()}</div>`
+                    : ""
+                }
             </div>
         `;
     })
@@ -10802,16 +8437,18 @@ function refreshAchievementsWindow() {
                 <i class="fas ${egg.icon}"></i>
             </div>
             <div class="achievement-name">${displayName}</div>
-            <div class="achievement-description">${egg.unlocked
-          ? displayDesc
-          : `<i class="fas fa-lightbulb" style="margin-right: 0.5rem; color: var(--accent);"></i>${displayDesc}`
-        }</div>
-            ${egg.unlocked
-          ? `<div class="achievement-date">Found: ${new Date(
-            egg.unlockedDate
-          ).toLocaleDateString()}</div>`
-          : ""
-        }
+            <div class="achievement-description">${
+              egg.unlocked
+                ? displayDesc
+                : `<i class="fas fa-lightbulb" style="margin-right: 0.5rem; color: var(--accent);"></i>${displayDesc}`
+            }</div>
+            ${
+              egg.unlocked
+                ? `<div class="achievement-date">Found: ${new Date(
+                    egg.unlockedDate
+                  ).toLocaleDateString()}</div>`
+                : ""
+            }
         </div>
     `;
     })
@@ -10832,8 +8469,8 @@ function refreshAchievementsWindow() {
                     </div>
                     <div class="achievements-stat">
                         <div class="achievements-stat-value">${Math.floor(
-    achievementsData.totalUptime
-  )}m</div>
+                          achievementsData.totalUptime
+                        )}m</div>
                         <div class="achievements-stat-label">Total Uptime</div>
                     </div>
                 </div>
@@ -10940,36 +8577,42 @@ function openAchievements() {
         : "";
 
       return `
-            <div class="achievement-card ${achievement.unlocked ? "unlocked" : "locked"
-        }">
+            <div class="achievement-card ${
+              achievement.unlocked ? "unlocked" : "locked"
+            }">
                 <div class="achievement-icon">
                     <i class="fas ${achievement.icon}"></i>
-                    ${achievement.unlocked
-          ? '<div class="achievement-badge">✓</div>'
-          : ""
-        }
+                    ${
+                      achievement.unlocked
+                        ? '<div class="achievement-badge">✓</div>'
+                        : ""
+                    }
                 </div>
-                <div class="achievement-name">${achievement.unlocked ? achievement.name : "???"
-        }</div>
-                <div class="achievement-description">${achievement.unlocked
-          ? achievement.description
-          : "Locked - Keep exploring to unlock!"
-        }</div>
-                ${hasProgress && !achievement.unlocked
-          ? `
+                <div class="achievement-name">${
+                  achievement.unlocked ? achievement.name : "???"
+                }</div>
+                <div class="achievement-description">${
+                  achievement.unlocked
+                    ? achievement.description
+                    : "Locked - Keep exploring to unlock!"
+                }</div>
+                ${
+                  hasProgress && !achievement.unlocked
+                    ? `
                     <div class="achievement-progress">
                         <div class="achievement-progress-bar" style="width: ${progressPercent}%"></div>
                     </div>
                     <div class="achievement-date">${progressText}</div>
                 `
-          : ""
-        }
-                ${achievement.unlocked
-          ? `<div class="achievement-date">Unlocked: ${new Date(
-            achievement.unlockedDate
-          ).toLocaleDateString()}</div>`
-          : ""
-        }
+                    : ""
+                }
+                ${
+                  achievement.unlocked
+                    ? `<div class="achievement-date">Unlocked: ${new Date(
+                        achievement.unlockedDate
+                      ).toLocaleDateString()}</div>`
+                    : ""
+                }
             </div>
         `;
     })
@@ -10981,22 +8624,25 @@ function openAchievements() {
       const displayDesc = egg.unlocked ? egg.description : egg.hint;
 
       return `
-            <div class="easter-egg-card ${egg.unlocked ? "unlocked" : "locked"
-        }">
+            <div class="easter-egg-card ${
+              egg.unlocked ? "unlocked" : "locked"
+            }">
                 <div class="easter-egg-icon">
                     <i class="fas ${egg.icon}"></i>
                 </div>
                 <div class="achievement-name">${displayName}</div>
-                <div class="achievement-description">${egg.unlocked
-          ? displayDesc
-          : `<i class="fas fa-lightbulb" style="margin-right: 0.5rem; color: var(--accent);"></i>${displayDesc}`
-        }</div>
-                ${egg.unlocked
-          ? `<div class="achievement-date">Found: ${new Date(
-            egg.unlockedDate
-          ).toLocaleDateString()}</div>`
-          : ""
-        }
+                <div class="achievement-description">${
+                  egg.unlocked
+                    ? displayDesc
+                    : `<i class="fas fa-lightbulb" style="margin-right: 0.5rem; color: var(--accent);"></i>${displayDesc}`
+                }</div>
+                ${
+                  egg.unlocked
+                    ? `<div class="achievement-date">Found: ${new Date(
+                        egg.unlockedDate
+                      ).toLocaleDateString()}</div>`
+                    : ""
+                }
             </div>
         `;
     })
@@ -11017,8 +8663,8 @@ function openAchievements() {
                     </div>
                     <div class="achievements-stat">
                         <div class="achievements-stat-value">${Math.floor(
-    achievementsData.totalUptime
-  )}m</div>
+                          achievementsData.totalUptime
+                        )}m</div>
                         <div class="achievements-stat-label">Total Uptime</div>
                     </div>
                 </div>
@@ -11332,22 +8978,15 @@ window.addEventListener("DOMContentLoaded", () => {
   }
 });
 
-const _originalOpenAppForAppStore = openApp;
+const _originalOpenAppForCloaking2 = openApp;
 window.openApp = openApp = function (appName, ...args) {
-  _originalOpenAppForAppStore(appName, ...args);
-  if (appName === "appstore") {
-    setTimeout(() => {
-      // Initialize the default themes view with illustrations
-      const activeSection = document.querySelector(".appstore-section.active");
-      if (activeSection) {
-        switchAppStoreSection("themes", activeSection);
-      }
-    }, 100);
-  }
+  _originalOpenAppForCloaking2(appName, ...args);
+
   if (appName === "cloaking") {
     setTimeout(() => {
       const toggle = document.getElementById("autoRotateToggle");
       const settings = document.getElementById("rotateSettings");
+
       if (toggle && cloakingConfig.autoRotate) {
         toggle.classList.add("active");
         if (settings) {
@@ -11355,21 +8994,26 @@ window.openApp = openApp = function (appName, ...args) {
           settings.style.pointerEvents = "all";
         }
       }
+
       const speedInput = document.getElementById("rotateSpeed");
       if (speedInput) {
         speedInput.value = cloakingConfig.rotateSpeed;
         updateRotateSpeedDisplay(cloakingConfig.rotateSpeed);
       }
+
       renderRotationList();
+
       const panicUrl = document.getElementById("panicUrl");
       if (panicUrl) {
         panicUrl.value = cloakingConfig.panicUrl || "";
       }
+
       const panicDisplay = document.getElementById("panicHotkeyDisplay");
       if (panicDisplay) {
         panicDisplay.textContent =
           cloakingConfig.panicKey || "Click to set hotkey";
       }
+
       updateCloakPreview();
     }, 100);
   }
@@ -11444,107 +9088,22 @@ document.addEventListener("contextmenu", () => {
   hideProperties();
 });
 function updateLoginScreen() {
-  // Check for multi-user accounts
-  const accounts = getAllAccounts();
-  
-  if (accounts.length > 0) {
-    // Multi-user system - show account list
-    updateLoginWithAccounts(accounts);
-  } else {
-    // Old single-user system
-    const isPasswordless =
-      localStorage.getItem("nautilusOS_isPasswordless") === "true";
-    const passwordWrapper = document.getElementById("passwordWrapper");
-    const loginSubtitle = document.getElementById("loginSubtitle");
-    const loginContainer = document.querySelector(".login-container");
-
-    if (isPasswordless) {
-      if (passwordWrapper) passwordWrapper.style.display = "none";
-      if (loginSubtitle)
-        loginSubtitle.textContent =
-          "Passwordless account - just enter your username";
-      if (loginContainer) loginContainer.classList.add("passwordless");
-    } else {
-      if (passwordWrapper) passwordWrapper.style.display = "block";
-      if (loginSubtitle) loginSubtitle.textContent = "Sign in to continue";
-      if (loginContainer) loginContainer.classList.remove("passwordless");
-    }
-  }
-}
-
-function updateLoginWithAccounts(accounts) {
-  const loginSubtitle = document.getElementById("loginSubtitle");
-  const usernameInput = document.getElementById("username");
+  const isPasswordless =
+    localStorage.getItem("nautilusOS_isPasswordless") === "true";
   const passwordWrapper = document.getElementById("passwordWrapper");
-  
-  if (accounts.length === 1) {
-    // Only one account, pre-fill username
-    const account = accounts[0];
-    if (usernameInput) {
-      usernameInput.value = account.username;
-    }
-    if (loginSubtitle) {
-      loginSubtitle.textContent = account.isPasswordless ? "Passwordless account - click Sign In" : "Enter your password";
-    }
-    if (passwordWrapper) {
-      passwordWrapper.style.display = account.isPasswordless ? "none" : "block";
-    }
-  } else {
-    // Multiple accounts - show account selector
-    if (loginSubtitle) {
-      loginSubtitle.innerHTML = `
-        <div style="margin-bottom: 0.5rem; color: var(--text-secondary);">Select an account:</div>
-        <div id="accountSelector" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 200px; overflow-y: auto;">
-          ${accounts.map(acc => `
-            <div class="account-select-item" onclick="selectLoginAccount('${acc.username}')" style="padding: 0.75rem; background: rgba(30, 35, 48, 0.6); border: 1px solid var(--border); border-radius: 8px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 0.75rem;">
-              <i class="fas fa-user" style="color: var(--accent);"></i>
-              <div style="flex: 1;">
-                <div style="color: var(--text-primary); font-family: fontb;">${acc.username}</div>
-                <div style="color: var(--text-secondary); font-size: 0.8rem;">${acc.role === "superuser" ? "Super User" : "Standard User"}</div>
-              </div>
-              ${acc.isPasswordless ? '<i class="fas fa-unlock" style="color: var(--success-green);" title="Passwordless"></i>' : '<i class="fas fa-lock" style="color: var(--text-secondary);"></i>'}
-            </div>
-          `).join('')}
-        </div>
-      `;
-    }
-    
-    // Hide username and password fields initially
-    if (usernameInput) usernameInput.style.display = "none";
+  const loginSubtitle = document.getElementById("loginSubtitle");
+  const loginContainer = document.querySelector(".login-container");
+
+  if (isPasswordless) {
     if (passwordWrapper) passwordWrapper.style.display = "none";
-  }
-}
-
-function selectLoginAccount(username) {
-  const account = getAccountByUsername(username);
-  if (!account) return;
-  
-  const usernameInput = document.getElementById("username");
-  const passwordInput = document.getElementById("password");
-  const passwordWrapper = document.getElementById("passwordWrapper");
-  const loginSubtitle = document.getElementById("loginSubtitle");
-  
-  // Fill username
-  if (usernameInput) {
-    usernameInput.value = username;
-    usernameInput.style.display = "block";
-  }
-  
-  // Show/hide password field
-  if (passwordWrapper) {
-    passwordWrapper.style.display = account.isPasswordless ? "none" : "block";
-  }
-  
-  // Update subtitle
-  if (loginSubtitle) {
-    loginSubtitle.innerHTML = account.isPasswordless ? 
-      `<a href="#" onclick="event.preventDefault(); updateLoginScreen();" style="color: var(--accent); text-decoration: underline; cursor: pointer;">← Back to account list</a>` : 
-      `Enter password for ${username} <a href="#" onclick="event.preventDefault(); updateLoginScreen();" style="color: var(--accent); text-decoration: underline; cursor: pointer; margin-left: 0.5rem;">← Back</a>`;
-  }
-  
-  // Focus password input if needed
-  if (!account.isPasswordless && passwordInput) {
-    setTimeout(() => passwordInput.focus(), 100);
+    if (loginSubtitle)
+      loginSubtitle.textContent =
+        "Passwordless account - just enter your username";
+    if (loginContainer) loginContainer.classList.add("passwordless");
+  } else {
+    if (passwordWrapper) passwordWrapper.style.display = "block";
+    if (loginSubtitle) loginSubtitle.textContent = "Sign in to continue";
+    if (loginContainer) loginContainer.classList.remove("passwordless");
   }
 }
 function switchSettingsTab(tabName, element) {
@@ -12046,7 +9605,7 @@ function checkImportedAchievements() {
   if (installedThemes.length > 0) {
     unlockAchievement("theme-changer");
   }
-
+  
   const preinstalledApps = [
     "files",
     "terminal",
@@ -12061,34 +9620,34 @@ function checkImportedAchievements() {
     "calculator",
     "cloaking",
   ];
-
+  
   installedApps.forEach((appName) => {
     if (!preinstalledApps.includes(appName)) {
       achievementsData.openedApps.add(appName);
     }
   });
-
+  
   const allAppsAchievement = achievementsData.achievements["all-apps"];
   if (allAppsAchievement) {
-    allAppsAchievement.progress = achievementsData.openedApps.size;
-    if (achievementsData.openedApps.size >= allAppsAchievement.target) {
-      unlockAchievement("all-apps");
-    }
+  allAppsAchievement.progress = achievementsData.openedApps.size;
+  if (achievementsData.openedApps.size >= allAppsAchievement.target) {
+  unlockAchievement("all-apps");
   }
-
+  }
+  
   saveAchievements();
-}
-
-function openChangeUsernameDialog() {
+  }
+  
+  function openChangeUsernameDialog() {
   showModal(
-    "Change Username",
-    "fa-user-edit",
-    "Enter your new username:",
-    "changeUsername",
-    "Change",
-    "Cancel"
+  "Change Username",
+  "fa-user-edit",
+  "Enter your new username:",
+  "changeUsername",
+  "Change",
+  "Cancel"
   );
-
+  
   const inputContainer = document.getElementById("modalInputContainer");
   inputContainer.innerHTML = `
   <input 
@@ -12101,62 +9660,62 @@ function openChangeUsernameDialog() {
   onkeypress="if(event.key === 'Enter') changeUsername()"
   >
   `;
-
+  
   setTimeout(() => {
-    const input = document.getElementById("newUsernameInput");
-    if (input) {
-      input.focus();
-      input.select();
-    }
+  const input = document.getElementById("newUsernameInput");
+  if (input) {
+  input.focus();
+  input.select();
+  }
   }, 100);
-}
-
-function changeUsername() {
+  }
+  
+  function changeUsername() {
   const newUsernameInput = document.getElementById("newUsernameInput");
   if (!newUsernameInput) return;
-
+  
   const newUsername = newUsernameInput.value.trim();
-
+  
   if (!newUsername) {
-    showToast("Username cannot be empty", "fa-exclamation-circle");
-    return;
+  showToast("Username cannot be empty", "fa-exclamation-circle");
+  return;
   }
-
+  
   if (newUsername.length < 3) {
-    showToast("Username must be at least 3 characters long", "fa-exclamation-circle");
-    return;
+  showToast("Username must be at least 3 characters long", "fa-exclamation-circle");
+  return;
   }
-
+  
   if (newUsername.length > 20) {
-    showToast("Username must be 20 characters or less", "fa-exclamation-circle");
-    return;
+  showToast("Username must be 20 characters or less", "fa-exclamation-circle");
+  return;
   }
-
+  
   if (!/^[a-zA-Z0-9_-]+$/.test(newUsername)) {
-    showToast("Username can only contain letters, numbers, underscores, and hyphens", "fa-exclamation-circle");
-    return;
+  showToast("Username can only contain letters, numbers, underscores, and hyphens", "fa-exclamation-circle");
+  return;
   }
-
+  
   if (newUsername === currentUsername) {
-    showToast("New username is the same as current username", "fa-info-circle");
-    closeModal();
-    return;
+  showToast("New username is the same as current username", "fa-info-circle");
+  closeModal();
+  return;
   }
-
+  
   currentUsername = newUsername;
   localStorage.setItem("nautilusOS_username", newUsername);
   document.getElementById("displayUsername").textContent = newUsername;
-
+  
   showToast(`Username changed to "${newUsername}"`, "fa-check-circle");
   closeModal();
-
+  
   if (windows["settings"]) {
-    closeWindow(
-      windows["settings"].querySelector(".window-btn.close"),
-      "settings"
-    );
+  closeWindow(
+  windows["settings"].querySelector(".window-btn.close"),
+  "settings"
+  );
   }
-}
+  }
 
 let game2048 = {
   board: null,
@@ -12164,11 +9723,7 @@ let game2048 = {
   best: localStorage.getItem('2048Best') ? parseInt(localStorage.getItem('2048Best')) : 0,
   size: 4,
   gameStarted: false,
-  tiles: [],
-  mergedTiles: new Set(),
-  newTiles: new Set(),
-  previousBoard: null,
-  slideDirection: null
+  tiles: []
 };
 
 function start2048Game() {
@@ -12176,18 +9731,14 @@ function start2048Game() {
   game2048.score = 0;
   game2048.gameStarted = true;
   game2048.tiles = [];
-  game2048.mergedTiles = new Set();
-  game2048.newTiles = new Set();
-  game2048.previousBoard = null;
-  game2048.slideDirection = null;
-
+  
   document.getElementById('game2048Score').textContent = '0';
   document.getElementById('game2048Best').textContent = game2048.best;
-
+  
   addRandomTile2048();
   addRandomTile2048();
   render2048Board();
-
+  
   document.removeEventListener('keydown', handle2048KeyPress);
   document.addEventListener('keydown', handle2048KeyPress);
 }
@@ -12197,22 +9748,21 @@ function addRandomTile2048() {
   for (let i = 0; i < game2048.size; i++) {
     for (let j = 0; j < game2048.size; j++) {
       if (game2048.board[i][j] === 0) {
-        emptyCells.push({ row: i, col: j });
+        emptyCells.push({row: i, col: j});
       }
     }
   }
-
+  
   if (emptyCells.length > 0) {
     const cell = emptyCells[Math.floor(Math.random() * emptyCells.length)];
     game2048.board[cell.row][cell.col] = Math.random() < 0.9 ? 2 : 4;
-    game2048.newTiles.add(`${cell.row}-${cell.col}`);
   }
 }
 
 function getTileColor(value) {
   const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
   const bgSecondary = getComputedStyle(document.documentElement).getPropertyValue('--bg-secondary').trim();
-
+  
   if (value === 0) return bgSecondary;
   if (value === 2) return 'rgba(125, 211, 192, 0.2)';
   if (value === 4) return 'rgba(125, 211, 192, 0.3)';
@@ -12228,7 +9778,7 @@ function getTileColor(value) {
 function getTileTextColor(value) {
   const textPrimary = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim();
   const bgPrimary = getComputedStyle(document.documentElement).getPropertyValue('--bg-primary').trim();
-
+  
   if (value >= 8) return textPrimary;
   return textPrimary;
 }
@@ -12236,63 +9786,20 @@ function getTileTextColor(value) {
 function render2048Board() {
   const boardEl = document.getElementById('game2048Board');
   if (!boardEl) return;
-
-  // Create container with absolute positioning for smooth animations
+  
   boardEl.innerHTML = '';
-  boardEl.style.display = 'block';
+  boardEl.style.display = 'grid';
+  boardEl.style.gridTemplateColumns = `repeat(${game2048.size}, 100px)`;
+  boardEl.style.gap = '10px';
   boardEl.style.position = 'relative';
-  boardEl.style.width = `${game2048.size * 100 + (game2048.size - 1) * 10}px`;
-  boardEl.style.height = `${game2048.size * 100 + (game2048.size - 1) * 10}px`;
-
-  // Render background grid
-  for (let i = 0; i < game2048.size; i++) {
-    for (let j = 0; j < game2048.size; j++) {
-      const cell = document.createElement('div');
-      cell.className = 'tile-cell-bg';
-      cell.style.position = 'absolute';
-      cell.style.left = `${j * 110}px`;
-      cell.style.top = `${i * 110}px`;
-      cell.style.width = '100px';
-      cell.style.height = '100px';
-      cell.style.background = getComputedStyle(document.documentElement).getPropertyValue('--bg-secondary').trim();
-      cell.style.border = '2px solid var(--border)';
-      cell.style.borderRadius = '8px';
-      cell.style.opacity = '0.3';
-      boardEl.appendChild(cell);
-    }
-  }
-
-  // Render actual tiles with positions
-  const tileContainer = document.createElement('div');
-  tileContainer.style.position = 'absolute';
-  tileContainer.style.top = '0';
-  tileContainer.style.left = '0';
-  tileContainer.style.width = '100%';
-  tileContainer.style.height = '100%';
-  boardEl.appendChild(tileContainer);
-
+  
   for (let i = 0; i < game2048.size; i++) {
     for (let j = 0; j < game2048.size; j++) {
       const value = game2048.board[i][j];
-      if (value === 0) continue;
-
       const tile = document.createElement('div');
-      tile.className = 'tile-2048';
-      tile.dataset.row = i;
-      tile.dataset.col = j;
-      tile.dataset.value = value;
-      
-      // Calculate position
-      const left = j * 110;
-      const top = i * 110;
-      
-      tile.style.position = 'absolute';
-      tile.style.left = `${left}px`;
-      tile.style.top = `${top}px`;
       tile.style.width = '100px';
       tile.style.height = '100px';
       tile.style.background = getTileColor(value);
-      tile.style.border = '2px solid var(--border)';
       tile.style.borderRadius = '8px';
       tile.style.display = 'flex';
       tile.style.alignItems = 'center';
@@ -12301,118 +9808,27 @@ function render2048Board() {
       tile.style.fontWeight = 'bold';
       tile.style.fontFamily = 'fontb';
       tile.style.color = getTileTextColor(value);
-      tile.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.3)';
-      tile.style.zIndex = '10';
+      tile.style.transition = 'all 0.15s ease';
+      tile.style.border = value > 0 ? '2px solid var(--border)' : 'none';
+      tile.style.boxShadow = value > 0 ? '0 2px 8px rgba(0, 0, 0, 0.3)' : 'none';
       
-      // Animation handling
-      if (game2048.newTiles.has(`${i}-${j}`)) {
-        tile.style.transform = 'scale(0)';
-        tile.style.transition = 'transform 0.2s ease';
-        setTimeout(() => {
-          tile.style.transform = 'scale(1)';
-        }, 50);
-      } else if (game2048.mergedTiles.has(`${i}-${j}`)) {
-        tile.style.transition = 'all 0.15s ease, transform 0.2s ease';
-        setTimeout(() => {
-          tile.style.transform = 'scale(1.1)';
-          setTimeout(() => {
-            tile.style.transform = 'scale(1)';
-          }, 100);
-        }, 150);
-      } else if (game2048.previousBoard && game2048.slideDirection) {
-        // Find previous position and animate slide
-        const prevPos = findPreviousPosition(i, j, value);
-        if (prevPos) {
-          const prevLeft = prevPos.col * 110;
-          const prevTop = prevPos.row * 110;
-          tile.style.left = `${prevLeft}px`;
-          tile.style.top = `${prevTop}px`;
-          tile.style.transition = 'all 0.15s ease';
-          
-          setTimeout(() => {
-            tile.style.left = `${left}px`;
-            tile.style.top = `${top}px`;
-          }, 10);
-        } else {
-          tile.style.transition = 'all 0.15s ease';
-        }
+      if (value > 0) {
+        tile.style.animation = 'tileAppear 0.2s ease';
       }
-
-      tile.textContent = value;
-      tileContainer.appendChild(tile);
+      
+      tile.textContent = value || '';
+      boardEl.appendChild(tile);
     }
   }
-
-  // Clear animation tracking
-  setTimeout(() => {
-    game2048.newTiles.clear();
-    game2048.mergedTiles.clear();
-    game2048.previousBoard = null;
-    game2048.slideDirection = null;
-  }, 200);
-}
-
-// New helper function to find previous position
-function findPreviousPosition(currentRow, currentCol, value) {
-  if (!game2048.previousBoard) return null;
-  
-  for (let i = 0; i < game2048.size; i++) {
-    for (let j = 0; j < game2048.size; j++) {
-      if (game2048.previousBoard[i][j] === value) {
-        // Check if this could be the source tile
-        const rowDiff = Math.abs(i - currentRow);
-        const colDiff = Math.abs(j - currentCol);
-        
-        if (game2048.slideDirection === 'up' && j === currentCol && i > currentRow) {
-          return {row: i, col: j};
-        } else if (game2048.slideDirection === 'down' && j === currentCol && i < currentRow) {
-          return {row: i, col: j};
-        } else if (game2048.slideDirection === 'left' && i === currentRow && j > currentCol) {
-          return {row: i, col: j};
-        } else if (game2048.slideDirection === 'right' && i === currentRow && j < currentCol) {
-          return {row: i, col: j};
-        }
-      }
-    }
-  }
-  
-  return null;
-}
-
-function getSlideAnimationClass(row, col, direction) {
-  if (!game2048.previousBoard) return null;
-
-  // Find where this tile was in the previous board
-  for (let i = 0; i < game2048.size; i++) {
-    for (let j = 0; j < game2048.size; j++) {
-      if (game2048.previousBoard[i][j] === game2048.board[row][col] && game2048.previousBoard[i][j] !== 0) {
-        // Check if it's the same tile that moved
-        if (i !== row || j !== col) {
-          switch (direction) {
-            case 'left': return j < col ? 'tile-slide-left' : null;
-            case 'right': return j > col ? 'tile-slide-right' : null;
-            case 'up': return i < row ? 'tile-slide-up' : null;
-            case 'down': return i > row ? 'tile-slide-down' : null;
-          }
-        }
-        break;
-      }
-    }
-  }
-  return null;
 }
 
 function handle2048KeyPress(e) {
   if (!game2048.gameStarted) return;
-
+  
   const key = e.key.toLowerCase();
   let moved = false;
   let direction = '';
-  let scoreBefore = game2048.score;
-
-  // Store previous board state for slide animations
-  game2048.previousBoard = game2048.board.map(row => [...row]);
-
+  
   if (key === 'arrowup' || key === 'w') {
     e.preventDefault();
     moved = move2048Up();
@@ -12430,39 +9846,25 @@ function handle2048KeyPress(e) {
     moved = move2048Right();
     direction = 'right';
   }
-
+  
   if (moved) {
-    game2048.slideDirection = direction;
     addRandomTile2048();
     setTimeout(() => {
       render2048Board();
     }, 100);
-
-    // Animate score if it increased
-    if (game2048.score > scoreBefore) {
-      const scoreEl = document.getElementById('game2048Score');
-      scoreEl.classList.add('score-increase');
-      setTimeout(() => {
-        scoreEl.classList.remove('score-increase');
-      }, 300);
-    }
-
+    
     if (game2048.score > game2048.best) {
       game2048.best = game2048.score;
       localStorage.setItem('2048Best', game2048.best);
       document.getElementById('game2048Best').textContent = game2048.best;
     }
-
+    
     if (check2048GameOver()) {
       game2048.gameStarted = false;
       setTimeout(() => {
         showToast('Game Over! Score: ' + game2048.score, 'fa-gamepad');
       }, 300);
     }
-  } else {
-    // Reset if no move was made
-    game2048.previousBoard = null;
-    game2048.slideDirection = null;
   }
 }
 
@@ -12476,8 +9878,6 @@ function move2048Left() {
         game2048.score += row[j];
         document.getElementById('game2048Score').textContent = game2048.score;
         row.splice(j + 1, 1);
-        // Track merged tile position
-        game2048.mergedTiles.add(`${i}-${j}`);
       }
     }
     while (row.length < game2048.size) row.push(0);
@@ -12498,8 +9898,6 @@ function move2048Right() {
         document.getElementById('game2048Score').textContent = game2048.score;
         row.splice(j - 1, 1);
         j--;
-        // Track merged tile position
-        game2048.mergedTiles.add(`${i}-${game2048.size - row.length + j}`);
       }
     }
     while (row.length < game2048.size) row.unshift(0);
@@ -12522,8 +9920,6 @@ function move2048Up() {
         game2048.score += col[i];
         document.getElementById('game2048Score').textContent = game2048.score;
         col.splice(i + 1, 1);
-        // Track merged tile position
-        game2048.mergedTiles.add(`${i}-${j}`);
       }
     }
     while (col.length < game2048.size) col.push(0);
@@ -12549,8 +9945,6 @@ function move2048Down() {
         document.getElementById('game2048Score').textContent = game2048.score;
         col.splice(i - 1, 1);
         i--;
-        // Track merged tile position
-        game2048.mergedTiles.add(`${game2048.size - col.length + i}-${j}`);
       }
     }
     while (col.length < game2048.size) col.unshift(0);
@@ -12586,24 +9980,24 @@ function startTicTacToe() {
   tttGame.board = Array(9).fill('');
   tttGame.currentPlayer = 'X';
   tttGame.gameActive = true;
-
+  
   document.getElementById('tttStatus').textContent = 'Your turn (X)';
   document.getElementById('tttWins').textContent = tttGame.wins;
   document.getElementById('tttLosses').textContent = tttGame.losses;
   document.getElementById('tttDraws').textContent = tttGame.draws;
-
+  
   renderTTTBoard();
 }
 
 function renderTTTBoard() {
   const boardEl = document.getElementById('tttBoard');
   if (!boardEl) return;
-
+  
   const accentColor = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
   const textPrimary = getComputedStyle(document.documentElement).getPropertyValue('--text-primary').trim();
   const bgSecondary = getComputedStyle(document.documentElement).getPropertyValue('--bg-secondary').trim();
   const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim();
-
+  
   boardEl.innerHTML = '';
   for (let i = 0; i < 9; i++) {
     const cell = document.createElement('div');
@@ -12622,7 +10016,7 @@ function renderTTTBoard() {
     cell.style.transition = 'all 0.2s ease';
     cell.style.color = tttGame.board[i] === 'X' ? accentColor : textPrimary;
     cell.textContent = tttGame.board[i];
-
+    
     if (tttGame.board[i] === '' && tttGame.gameActive) {
       cell.onmouseover = () => {
         cell.style.background = `rgba(125, 211, 192, 0.1)`;
@@ -12635,7 +10029,7 @@ function renderTTTBoard() {
         cell.style.borderColor = border;
       };
     }
-
+    
     cell.onclick = () => handleTTTCellClick(i);
     boardEl.appendChild(cell);
   }
@@ -12643,24 +10037,24 @@ function renderTTTBoard() {
 
 function handleTTTCellClick(index) {
   if (tttGame.board[index] !== '' || !tttGame.gameActive || tttGame.currentPlayer !== 'X') return;
-
+  
   tttGame.board[index] = 'X';
   renderTTTBoard();
-
+  
   const result = checkTTTWinner();
   if (result) {
     endTTTGame(result);
     return;
   }
-
+  
   if (tttGame.board.every(cell => cell !== '')) {
     endTTTGame('draw');
     return;
   }
-
+  
   tttGame.currentPlayer = 'O';
   document.getElementById('tttStatus').textContent = 'AI is thinking...';
-
+  
   setTimeout(() => {
     makeAIMove();
   }, 500);
@@ -12670,18 +10064,18 @@ function makeAIMove() {
   const bestMove = getBestMove();
   tttGame.board[bestMove] = 'O';
   renderTTTBoard();
-
+  
   const result = checkTTTWinner();
   if (result) {
     endTTTGame(result);
     return;
   }
-
+  
   if (tttGame.board.every(cell => cell !== '')) {
     endTTTGame('draw');
     return;
   }
-
+  
   tttGame.currentPlayer = 'X';
   document.getElementById('tttStatus').textContent = 'Your turn (X)';
 }
@@ -12697,7 +10091,7 @@ function getBestMove() {
       tttGame.board[i] = '';
     }
   }
-
+  
   for (let i = 0; i < 9; i++) {
     if (tttGame.board[i] === '') {
       tttGame.board[i] = 'X';
@@ -12708,15 +10102,15 @@ function getBestMove() {
       tttGame.board[i] = '';
     }
   }
-
+  
   const corners = [0, 2, 6, 8];
   const availableCorners = corners.filter(i => tttGame.board[i] === '');
   if (availableCorners.length > 0) {
     return availableCorners[Math.floor(Math.random() * availableCorners.length)];
   }
-
+  
   if (tttGame.board[4] === '') return 4;
-
+  
   const available = tttGame.board.map((cell, i) => cell === '' ? i : null).filter(i => i !== null);
   return available[Math.floor(Math.random() * available.length)];
 }
@@ -12727,2875 +10121,37 @@ function checkTTTWinner() {
     [0, 3, 6], [1, 4, 7], [2, 5, 8],
     [0, 4, 8], [2, 4, 6]
   ];
-
+  
   for (const pattern of winPatterns) {
     const [a, b, c] = pattern;
     if (tttGame.board[a] && tttGame.board[a] === tttGame.board[b] && tttGame.board[a] === tttGame.board[c]) {
       return tttGame.board[a];
     }
   }
-
+  
   return null;
 }
 
 function endTTTGame(result) {
   tttGame.gameActive = false;
   
-  const status = document.getElementById('tttStatus');
-
   if (result === 'X') {
     tttGame.wins++;
     localStorage.setItem('tttWins', tttGame.wins);
-    status.innerHTML = 'You won! <i class="fa-solid fa-trophy"</i>';
+    document.getElementById('tttStatus').textContent = 'You won! 🎉';
     document.getElementById('tttWins').textContent = tttGame.wins;
     showToast('You won!', 'fa-trophy');
-
   } else if (result === 'O') {
     tttGame.losses++;
     localStorage.setItem('tttLosses', tttGame.losses);
-    status.innerHTML = 'AI won! <i class="fa-solid fa-robot" </i>';
+    document.getElementById('tttStatus').textContent = 'AI won! 🤖';
     document.getElementById('tttLosses').textContent = tttGame.losses;
-    showToast('AI won!', 'fa-robot');
-
+    showToast('AI won!', 'fa-gamepad');
   } else {
     tttGame.draws++;
     localStorage.setItem('tttDraws', tttGame.draws);
-    status.innerHTML = "It's a draw! <i class='fa-solid fa-handshake'</i>";
+    document.getElementById('tttStatus').textContent = "It's a draw! 🤝";
     document.getElementById('tttDraws').textContent = tttGame.draws;
     showToast("It's a draw!", 'fa-handshake');
   }
 }
-
-// V86 Emulator Resource Management
-async function loadV86ResourcesOnDemand(windowEl) {
-  try {
-    // Check if already loaded
-    if (typeof V86Backend !== 'undefined' && typeof V86Frontend !== 'undefined' && typeof V86Starter !== 'undefined') {
-      console.log("V86 resources already loaded");
-      updateV86UI();
-      initializeV86WindowInstance(windowEl);
-      console.log("V86 emulator window opened with lifecycle management");
-      return;
-    }
-
-    // Show loading progress in the window
-    showV86LoadingProgress(windowEl);
-
-    const resources = [
-      { src: 'v86/libv86.mjs', name: 'V86', label: 'Loading V86 Library...', type: 'module' },
-      { src: 'v86/v86-resources.js', name: 'V86ResourceManager', label: 'Loading V86 Resources...' },
-      { src: 'v86/v86-backend.js', name: 'V86Backend', label: 'Loading V86 Core...' },
-      { src: 'v86/v86-wrapper.js', name: 'V86Wrapper', label: 'Loading V86 Wrapper...' },
-      { src: 'v86/v86-frontend.js', name: 'V86Frontend', label: 'Loading V86 Frontend...' }
-    ];
-
-    for (let i = 0; i < resources.length; i++) {
-      const resource = resources[i];
-      updateV86LoadingProgress(windowEl, resource.label, (i / resources.length) * 100);
-
-      if (typeof window[resource.name] === 'undefined') {
-        await loadScriptWithProgress(resource.src, resource.name, resource.type === 'module');
-      }
-    }
-
-    // Final initialization
-    updateV86LoadingProgress(windowEl, 'Initializing V86 Emulator...', 100);
-
-    setTimeout(() => {
-      hideV86LoadingProgress(windowEl);
-      // Don't call updateV86UI here - let V86Frontend handle the interface
-      initializeV86WindowInstance(windowEl);
-      console.log("V86 emulator window opened with lifecycle management");
-    }, 500);
-
-  } catch (error) {
-    console.error("Failed to load V86 resources:", error);
-    showV86LoadingError(windowEl, error.message);
-  }
-}
-
-function showV86LoadingProgress(windowEl) {
-  const container = windowEl.querySelector('.v86-container');
-  if (!container) return;
-
-  // Add loading overlay without replacing the container content
-  const overlay = document.createElement('div');
-  overlay.className = 'v86-loading-overlay';
-  overlay.innerHTML = `
-    <div class="v86-loading-content">
-      <div class="v86-loading-icon">
-        <i class="fas fa-microchip fa-3x"></i>
-      </div>
-      <h3>Loading V86 Emulator</h3>
-      <div class="v86-progress-container">
-        <div class="v86-progress-bar">
-          <div class="v86-progress-fill" style="width: 0%"></div>
-        </div>
-        <div class="v86-progress-text">Preparing...</div>
-      </div>
-    </div>
-  `;
-
-  container.appendChild(overlay);
-}
-
-function updateV86LoadingProgress(windowEl, message, percentage) {
-  const progressFill = windowEl.querySelector('.v86-progress-fill');
-  const progressText = windowEl.querySelector('.v86-progress-text');
-
-  if (progressFill) {
-    progressFill.style.width = `${percentage}%`;
-  }
-  if (progressText) {
-    progressText.textContent = message;
-  }
-}
-
-function hideV86LoadingProgress(windowEl) {
-  const overlay = windowEl.querySelector('.v86-loading-overlay');
-  if (overlay) {
-    overlay.style.opacity = '0';
-    setTimeout(() => {
-      // Don't regenerate the interface - let V86Frontend handle it
-      // The V86Frontend.initialize() will create the proper interface
-      overlay.remove();
-    }, 300);
-  }
-}
-
-function showV86LoadingError(windowEl, errorMessage) {
-  const container = windowEl.querySelector('.v86-container');
-  if (!container) return;
-
-  container.innerHTML = `
-    <div class="v86-loading-overlay">
-      <div class="v86-loading-content">
-        <div class="v86-loading-icon error">
-          <i class="fas fa-exclamation-triangle fa-3x"></i>
-        </div>
-        <h3>Failed to Load V86 Emulator</h3>
-        <p class="v86-error-message">${errorMessage}</p>
-        <button class="v86-retry-btn" onclick="retryV86Loading(this)">
-          <i class="fas fa-redo"></i> Retry
-        </button>
-      </div>
-    </div>
-  `;
-}
-
-function retryV86Loading(button) {
-  const windowEl = button.closest('.window');
-  if (windowEl) {
-    loadV86ResourcesOnDemand(windowEl);
-  }
-}
-
-function loadScriptWithProgress(src, expectedGlobal, isModule = false) {
-  return new Promise(async (resolve, reject) => {
-    // Handle ES modules differently
-    if (isModule) {
-      try {
-        const cacheBuster = '?v=' + Date.now();
-        const module = await import('../' + src + cacheBuster);
-        
-        // For V86 module, expose it globally
-        if (expectedGlobal === 'V86') {
-          // V86 is the default export
-          window[expectedGlobal] = module.default;
-        } else if (expectedGlobal && module[expectedGlobal]) {
-          window[expectedGlobal] = module[expectedGlobal];
-        } else if (expectedGlobal && module.default) {
-          window[expectedGlobal] = module.default;
-        }
-        
-        console.log(`Successfully loaded ${expectedGlobal || 'module'} from ${src}`);
-        resolve();
-      } catch (error) {
-        console.error(`Failed to load module ${src}:`, error);
-        reject(error);
-      }
-      return;
-    }
-    
-    // Regular script loading
-    const script = document.createElement('script');
-    // Add cache-busting parameter
-    const cacheBuster = '?v=' + Date.now();
-    script.src = src + cacheBuster;
-
-    script.onload = function () {
-      // Check for the global with retries
-      let attempts = 0;
-      const maxAttempts = 10;
-
-      const checkGlobal = () => {
-        attempts++;
-
-        if (!expectedGlobal || typeof window[expectedGlobal] !== 'undefined') {
-          console.log(`Successfully loaded ${expectedGlobal || 'script'} from ${src}`);
-          resolve();
-          return;
-        }
-
-        if (attempts < maxAttempts) {
-          console.log(`Attempt ${attempts}: ${expectedGlobal} not yet available, retrying...`);
-          setTimeout(checkGlobal, 10);
-        } else {
-          console.error(`${expectedGlobal} not found after loading ${src}. Available V86 globals:`, Object.keys(window).filter(k => k.includes('V86')));
-          reject(new Error(`${expectedGlobal} not found after loading ${src}`));
-        }
-      };
-
-      // Start checking immediately
-      checkGlobal();
-    };
-
-    script.onerror = function () {
-      reject(new Error(`Failed to load ${src}`));
-    };
-
-    document.head.appendChild(script);
-  });
-}
-
-async function loadV86AdditionalResources() {
-  const resources = [
-    { src: 'v86/libv86.mjs', name: 'V86', type: 'module' },
-    { src: 'v86/v86-resources.js', name: 'V86ResourceManager' },
-    { src: 'v86/v86-backend.js', name: 'V86Backend' },
-    { src: 'v86/v86-wrapper.js', name: 'V86Wrapper' },
-    { src: 'v86/v86-frontend.js', name: 'V86Frontend' }
-  ];
-
-  for (const resource of resources) {
-    if (typeof window[resource.name] === 'undefined') {
-      await loadScript(resource.src, resource.name);
-    }
-  }
-}
-
-function loadScript(src, expectedGlobal) {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = src;
-
-    script.onload = function () {
-      if (expectedGlobal && typeof window[expectedGlobal] === 'undefined') {
-        reject(new Error(`${expectedGlobal} not found after loading ${src}`));
-      } else {
-        resolve();
-      }
-    };
-
-    script.onerror = function () {
-      reject(new Error(`Failed to load ${src}`));
-    };
-
-    document.head.appendChild(script);
-  });
-}
-
-function cleanupV86Resources() {
-  // This function will be called when V86 emulator is uninstalled
-  // It will clean up any running emulator instances and resources
-  console.log("Cleaning up V86 emulator resources...");
-
-  try {
-    // Close any open V86 emulator windows with proper cleanup
-    Object.keys(windows).forEach(windowId => {
-      if (windowId === 'v86-emulator' || windowId.startsWith('v86-emulator')) {
-        const windowElement = windows[windowId];
-        if (windowElement) {
-          // Trigger proper cleanup before closing
-          handleV86WindowClose(windowElement);
-          // Close the window
-          const closeBtn = windowElement.querySelector('.window-btn.close');
-          if (closeBtn) {
-            closeBtn.click();
-          }
-        }
-      }
-    });
-
-    // Clean up all V86 frontend instances
-    if (window.v86Instances) {
-      Object.keys(window.v86Instances).forEach(instanceId => {
-        const instance = window.v86Instances[instanceId];
-        if (instance && typeof instance.cleanup === 'function') {
-          instance.cleanup();
-        }
-      });
-      window.v86Instances = {};
-    }
-
-    // Clean up global V86 backend instance
-    if (v86Instance) {
-      if (typeof v86Instance.cleanup === 'function') {
-        v86Instance.cleanup();
-      } else if (typeof v86Instance.stop === 'function') {
-        v86Instance.stop();
-      }
-      v86Instance = null;
-    }
-
-    // Reset V86 state
-    v86State = 'stopped';
-
-    // Clean up any V86-related timers
-    if (window.v86WindowTimers) {
-      Object.keys(window.v86WindowTimers).forEach(windowId => {
-        window.v86WindowTimers[windowId].forEach(timerId => {
-          clearTimeout(timerId);
-          clearInterval(timerId);
-        });
-      });
-      window.v86WindowTimers = {};
-    }
-
-    // Clean up V86 resource manager cache
-    if (typeof v86ResourceManager !== 'undefined' && v86ResourceManager.clearCache) {
-      v86ResourceManager.clearCache();
-    }
-
-    // Clean up V86 wrapper instances
-    if (typeof v86Wrapper !== 'undefined' && v86Wrapper.destroyAllInstances) {
-      v86Wrapper.destroyAllInstances();
-    }
-
-    console.log("V86 emulator resources cleaned up successfully");
-
-  } catch (error) {
-    console.error("Error during V86 resource cleanup:", error);
-    showToast("Error cleaning up V86 resources", "fa-exclamation-triangle");
-  }
-}
-
-// V86 Emulator Interface Generation
-function generateV86Interface() {
-  // Generate a unique container ID for this V86 instance
-  const containerId = 'v86-container-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-
-  return `
-    <div id="${containerId}" class="v86-container" style="width: 100%; height: 100%; background: var(--bg-primary);">
-      <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary);">
-        <div style="text-align: center;">
-          <i class="fas fa-microchip" style="font-size: 4rem; margin-bottom: 1rem; opacity: 0.3;"></i>
-          <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">V86 Emulator</div>
-          <div style="font-size: 0.9rem; opacity: 0.7;">Initializing...</div>
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-// V86 UI Update Function
-function updateV86UI() {
-  console.log("Updating V86 UI components...");
-
-  try {
-    // Update any V86-specific UI elements that need refreshing
-    const v86Containers = document.querySelectorAll('.v86-container');
-
-    v86Containers.forEach(container => {
-      // Check if container is still in initialization state
-      const initializingDiv = container.querySelector('div[style*="Initializing"]');
-      if (initializingDiv) {
-        // Update initialization message
-        initializingDiv.textContent = 'Loading emulator components...';
-      }
-    });
-
-    // Update V86 status indicators if they exist
-    const statusElements = document.querySelectorAll('.v86-status-text');
-    statusElements.forEach(element => {
-      if (element.textContent === 'Initializing...') {
-        element.textContent = 'Loading resources...';
-      }
-    });
-
-    console.log("V86 UI update completed");
-
-  } catch (error) {
-    console.error("Error updating V86 UI:", error);
-  }
-}
-
-// V86 Emulator Control Functions (Legacy - now handled by V86Frontend)
-// These functions are kept for backward compatibility but are no longer used
-let v86Instance = null;
-let v86State = 'stopped';
-
-// V86 Window Lifecycle Management
-function handleV86WindowClose(windowElement) {
-  console.log("Handling V86 window close - cleaning up emulator instance");
-
-  try {
-    // Stop any running emulator instance
-    if (v86State === 'running' && v86Instance) {
-      stopV86Emulator();
-    }
-
-    // Clean up any V86 frontend instances associated with this window
-    const windowId = windowElement.dataset.windowId;
-    if (windowId && window.v86Instances && window.v86Instances[windowId]) {
-      const frontend = window.v86Instances[windowId];
-      if (frontend && typeof frontend.cleanup === 'function') {
-        frontend.cleanup();
-      }
-      delete window.v86Instances[windowId];
-    }
-
-    // Clean up any event listeners or resources specific to this window
-    cleanupV86WindowResources(windowElement);
-
-    console.log("V86 window cleanup completed");
-
-  } catch (error) {
-    console.error("Error during V86 window cleanup:", error);
-  }
-}
-
-function handleV86WindowResize(windowElement) {
-  console.log("Handling V86 window resize - adjusting display scaling");
-
-  try {
-    // Get the window ID to find the associated frontend instance
-    const windowId = windowElement.dataset.windowId;
-    if (windowId && window.v86Instances && window.v86Instances[windowId]) {
-      const frontend = window.v86Instances[windowId];
-      if (frontend && typeof frontend.updateScreenScale === 'function') {
-        // Delay the scale update to allow window animation to complete
-        setTimeout(() => {
-          frontend.updateScreenScale();
-        }, 300);
-      }
-    }
-
-    // Fallback: Update any V86 display elements in the window
-    const v86Display = windowElement.querySelector('.v86-display');
-    if (v86Display) {
-      // Trigger a resize event for any canvas elements
-      const canvas = v86Display.querySelector('canvas');
-      if (canvas) {
-        // Force canvas to recalculate its display size
-        setTimeout(() => {
-          const event = new Event('resize');
-          window.dispatchEvent(event);
-        }, 300);
-      }
-    }
-
-  } catch (error) {
-    console.error("Error during V86 window resize handling:", error);
-  }
-}
-
-function initializeV86WindowInstance(windowElement) {
-  console.log("Initializing V86 window instance");
-
-  try {
-    // Check memory limits before creating new instance
-    if (!enforceV86MemoryLimits()) {
-      showToast("Cannot create V86 instance: memory or instance limits exceeded", "fa-exclamation-triangle");
-      return;
-    }
-
-    // Generate a unique window ID
-    const windowId = 'v86-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
-    windowElement.dataset.windowId = windowId;
-
-    // Initialize global V86 instances tracker if not exists
-    if (!window.v86Instances) {
-      window.v86Instances = {};
-    }
-
-    // Initialize instance cache if not exists
-    if (!window.v86InstanceCache) {
-      window.v86InstanceCache = {};
-    }
-
-    // Initialize window timers tracker if not exists
-    if (!window.v86WindowTimers) {
-      window.v86WindowTimers = {};
-    }
-    window.v86WindowTimers[windowId] = [];
-
-    // Find the V86 container in this window
-    const v86Container = windowElement.querySelector('.v86-container');
-    if (v86Container) {
-      // Get the container ID that was generated in generateV86Interface
-      const containerId = v86Container.id;
-
-      // Initialize V86 frontend for this window instance
-      if (typeof V86Frontend !== 'undefined') {
-        const frontend = new V86Frontend(v86Container);
-        window.v86Instances[windowId] = frontend;
-
-        // Initialize instance cache for this window
-        window.v86InstanceCache[windowId] = {
-          blobUrls: [],
-          buffers: [],
-          created: Date.now()
-        };
-
-        // Initialize the frontend
-        frontend.initialize().then(() => {
-          console.log(`V86 frontend initialized for window ${windowId}`);
-
-          // Log memory usage after initialization
-          const usage = getV86MemoryUsage();
-          console.log(`V86 Memory Usage - Instances: ${usage.activeInstances}, Memory: ${Math.round(usage.totalMemoryAllocated / (1024 * 1024))}MB`);
-
-        }).catch(error => {
-          console.error(`Failed to initialize V86 frontend for window ${windowId}:`, error);
-          // Clean up on initialization failure
-          cleanupV86InstanceMemory(windowId);
-          showToast("Failed to initialize V86 emulator", "fa-exclamation-triangle");
-        });
-      } else {
-        console.error("V86Frontend class not available");
-        showToast("V86 emulator components not loaded", "fa-exclamation-triangle");
-      }
-    }
-
-    // Set up window-specific event handlers
-    setupV86WindowEventHandlers(windowElement, windowId);
-
-    console.log(`V86 window instance ${windowId} initialized`);
-
-  } catch (error) {
-    console.error("Error initializing V86 window instance:", error);
-    showToast("Failed to initialize V86 emulator window", "fa-exclamation-triangle");
-  }
-}
-
-function setupV86WindowEventHandlers(windowElement, windowId) {
-  // Handle window resize events
-  const resizeObserver = new ResizeObserver(entries => {
-    for (let entry of entries) {
-      if (entry.target === windowElement) {
-        handleV86WindowResize(windowElement);
-      }
-    }
-  });
-
-  resizeObserver.observe(windowElement);
-
-  // Store the observer for cleanup
-  windowElement.v86ResizeObserver = resizeObserver;
-
-  // Handle window focus events
-  windowElement.addEventListener('mousedown', () => {
-    // Ensure V86 input handling is properly managed when window gains focus
-    const frontend = window.v86Instances && window.v86Instances[windowId];
-    if (frontend && frontend.inputFocused) {
-      // Re-establish input focus if it was previously captured
-      setTimeout(() => {
-        if (frontend.canvas) {
-          frontend.canvas.focus();
-        }
-      }, 100);
-    }
-  });
-}
-
-function cleanupV86WindowResources(windowElement) {
-  try {
-    console.log("Starting V86 window resource cleanup...");
-
-    // Clean up resize observer
-    if (windowElement.v86ResizeObserver) {
-      windowElement.v86ResizeObserver.disconnect();
-      delete windowElement.v86ResizeObserver;
-    }
-
-    // Clean up any other window-specific resources
-    const windowId = windowElement.dataset.windowId;
-    if (windowId) {
-      // Remove any timers or intervals associated with this window
-      if (window.v86WindowTimers && window.v86WindowTimers[windowId]) {
-        window.v86WindowTimers[windowId].forEach(timerId => {
-          clearTimeout(timerId);
-          clearInterval(timerId);
-        });
-        delete window.v86WindowTimers[windowId];
-      }
-
-      // Clean up memory allocated for this instance
-      cleanupV86InstanceMemory(windowId);
-    }
-
-    // Remove any event listeners attached to the window
-    const events = ['mousedown', 'mousemove', 'mouseup', 'keydown', 'keyup', 'resize'];
-    events.forEach(eventType => {
-      windowElement.removeEventListener(eventType, windowElement[`v86${eventType}Handler`]);
-    });
-
-    console.log("V86 window resources cleaned up successfully");
-
-  } catch (error) {
-    console.error("Error cleaning up V86 window resources:", error);
-  }
-}
-
-// V86 Memory Management for Multiple Instances
-function cleanupV86InstanceMemory(windowId) {
-  try {
-    console.log(`Cleaning up memory for V86 instance: ${windowId}`);
-
-    // Clean up the specific frontend instance
-    if (window.v86Instances && window.v86Instances[windowId]) {
-      const instance = window.v86Instances[windowId];
-
-      // Call cleanup on the instance
-      if (typeof instance.cleanup === 'function') {
-        instance.cleanup();
-      }
-
-      // Remove from instances registry
-      delete window.v86Instances[windowId];
-    }
-
-    // Clean up any cached resources specific to this instance
-    if (window.v86InstanceCache && window.v86InstanceCache[windowId]) {
-      const cache = window.v86InstanceCache[windowId];
-
-      // Clean up any blob URLs
-      if (cache.blobUrls) {
-        cache.blobUrls.forEach(url => {
-          try {
-            URL.revokeObjectURL(url);
-          } catch (e) {
-            console.warn("Failed to revoke blob URL:", url, e);
-          }
-        });
-      }
-
-      // Clean up any array buffers
-      if (cache.buffers) {
-        cache.buffers.forEach(buffer => {
-          // Clear the buffer (not strictly necessary but good practice)
-          if (buffer instanceof ArrayBuffer) {
-            // ArrayBuffers can't be explicitly freed, but we can clear references
-            buffer = null;
-          }
-        });
-      }
-
-      delete window.v86InstanceCache[windowId];
-    }
-
-    // Force garbage collection hint (if available)
-    if (window.gc && typeof window.gc === 'function') {
-      try {
-        window.gc();
-      } catch (e) {
-        // gc() is not always available, ignore errors
-      }
-    }
-
-    console.log(`Memory cleanup completed for V86 instance: ${windowId}`);
-
-  } catch (error) {
-    console.error(`Error cleaning up memory for V86 instance ${windowId}:`, error);
-  }
-}
-
-function getV86MemoryUsage() {
-  try {
-    const usage = {
-      activeInstances: 0,
-      totalMemoryAllocated: 0,
-      cacheSize: 0
-    };
-
-    // Count active instances
-    if (window.v86Instances) {
-      usage.activeInstances = Object.keys(window.v86Instances).length;
-
-      // Calculate memory usage per instance
-      Object.values(window.v86Instances).forEach(instance => {
-        if (instance.config && instance.config.memory_size) {
-          usage.totalMemoryAllocated += instance.config.memory_size;
-        }
-      });
-    }
-
-    // Calculate cache size
-    if (window.v86InstanceCache) {
-      Object.values(window.v86InstanceCache).forEach(cache => {
-        if (cache.buffers) {
-          cache.buffers.forEach(buffer => {
-            if (buffer instanceof ArrayBuffer) {
-              usage.cacheSize += buffer.byteLength;
-            }
-          });
-        }
-      });
-    }
-
-    return usage;
-
-  } catch (error) {
-    console.error("Error calculating V86 memory usage:", error);
-    return { activeInstances: 0, totalMemoryAllocated: 0, cacheSize: 0 };
-  }
-}
-
-function enforceV86MemoryLimits() {
-  try {
-    const usage = getV86MemoryUsage();
-    const maxInstances = 3; // Limit to 3 concurrent instances
-    const maxTotalMemory = 1024 * 1024 * 1024; // 1GB total limit
-
-    if (usage.activeInstances > maxInstances) {
-      console.warn(`V86 instance limit exceeded: ${usage.activeInstances}/${maxInstances}`);
-      showToast(`Too many V86 instances running (${usage.activeInstances}/${maxInstances}). Consider closing some.`, "fa-exclamation-triangle");
-      return false;
-    }
-
-    if (usage.totalMemoryAllocated > maxTotalMemory) {
-      console.warn(`V86 memory limit exceeded: ${Math.round(usage.totalMemoryAllocated / (1024 * 1024))}MB`);
-      showToast("V86 memory usage is high. Consider reducing memory allocation or closing instances.", "fa-exclamation-triangle");
-      return false;
-    }
-
-    return true;
-
-  } catch (error) {
-    console.error("Error enforcing V86 memory limits:", error);
-    return true; // Allow operation to continue on error
-  }
-}
-
-// V86 Error Handling and User Feedback
-function handleV86LoadError(errorType, errorMessage) {
-  console.error(`V86 Load Error [${errorType}]:`, errorMessage);
-
-  const errorHandlers = {
-    'BACKEND_LOAD_FAILED': () => {
-      showV86ErrorDialog(
-        'Backend Loading Failed',
-        'The V86 emulator core could not be loaded. This might be due to:',
-        [
-          'Network connectivity issues',
-          'Missing or corrupted emulator files',
-          'Browser compatibility problems'
-        ],
-        [
-          { text: 'Retry', action: () => retryV86Load() },
-          { text: 'Check Network', action: () => window.open('https://www.google.com', '_blank') },
-          { text: 'Close', action: () => closeV86ErrorDialog() }
-        ]
-      );
-    },
-
-    'LOAD_TIMEOUT': () => {
-      showV86ErrorDialog(
-        'Loading Timeout',
-        'The V86 emulator took too long to load. This might be due to:',
-        [
-          'Slow internet connection',
-          'Large emulator files',
-          'Server response issues'
-        ],
-        [
-          { text: 'Retry', action: () => retryV86Load() },
-          { text: 'Close', action: () => closeV86ErrorDialog() }
-        ]
-      );
-    },
-
-    'RESOURCE_NOT_FOUND': () => {
-      showV86ErrorDialog(
-        'Resources Missing',
-        'Required V86 emulator files are missing:',
-        [
-          'BIOS files may not be available',
-          'WebAssembly core is missing',
-          'Installation may be incomplete'
-        ],
-        [
-          { text: 'Reinstall', action: () => reinstallV86() },
-          { text: 'Close', action: () => closeV86ErrorDialog() }
-        ]
-      );
-    },
-
-    'INITIALIZATION_FAILED': () => {
-      showV86ErrorDialog(
-        'Initialization Failed',
-        'The V86 emulator could not be initialized:',
-        [
-          'Insufficient memory available',
-          'WebAssembly not supported',
-          'Configuration errors'
-        ],
-        [
-          { text: 'Reduce Memory', action: () => showV86MemorySettings() },
-          { text: 'Retry', action: () => retryV86Initialization() },
-          { text: 'Close', action: () => closeV86ErrorDialog() }
-        ]
-      );
-    },
-
-    'RUNTIME_ERROR': () => {
-      showV86ErrorDialog(
-        'Runtime Error',
-        'The V86 emulator encountered an error during operation:',
-        [
-          'Emulation crashed unexpectedly',
-          'Memory allocation failed',
-          'Invalid disk image or configuration'
-        ],
-        [
-          { text: 'Restart Emulator', action: () => restartV86Emulator() },
-          { text: 'Reset Configuration', action: () => resetV86Configuration() },
-          { text: 'Close', action: () => closeV86ErrorDialog() }
-        ]
-      );
-    },
-
-    'UNEXPECTED_ERROR': () => {
-      showV86ErrorDialog(
-        'Unexpected Error',
-        'An unexpected error occurred:',
-        [errorMessage || 'Unknown error'],
-        [
-          { text: 'Report Issue', action: () => reportV86Issue(errorType, errorMessage) },
-          { text: 'Retry', action: () => retryV86Load() },
-          { text: 'Close', action: () => closeV86ErrorDialog() }
-        ]
-      );
-    }
-  };
-
-  const handler = errorHandlers[errorType] || errorHandlers['UNEXPECTED_ERROR'];
-  handler();
-}
-
-function showV86ErrorDialog(title, description, causes, actions) {
-  const dialog = document.createElement('div');
-  dialog.className = 'v86-error-dialog';
-  dialog.innerHTML = `
-    <div class="v86-error-overlay">
-      <div class="v86-error-content">
-        <div class="v86-error-header">
-          <i class="fas fa-exclamation-triangle"></i>
-          <h3>${title}</h3>
-        </div>
-        <div class="v86-error-body">
-          <p>${description}</p>
-          <ul class="v86-error-causes">
-            ${causes.map(cause => `<li>${cause}</li>`).join('')}
-          </ul>
-        </div>
-        <div class="v86-error-actions">
-          ${actions.map(action =>
-    `<button class="v86-error-btn" onclick="${action.action.name}()">${action.text}</button>`
-  ).join('')}
-        </div>
-      </div>
-    </div>
-  `;
-
-  // Add styles
-  const style = document.createElement('style');
-  style.textContent = `
-    .v86-error-dialog {
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      z-index: 10000;
-    }
-    
-    .v86-error-overlay {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.7);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
-    
-    .v86-error-content {
-      background: var(--bg-primary);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      max-width: 500px;
-      width: 90%;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
-    }
-    
-    .v86-error-header {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 20px;
-      border-bottom: 1px solid var(--border);
-      color: var(--error-red);
-    }
-    
-    .v86-error-header i {
-      font-size: 24px;
-    }
-    
-    .v86-error-header h3 {
-      margin: 0;
-      color: var(--text-primary);
-    }
-    
-    .v86-error-body {
-      padding: 20px;
-    }
-    
-    .v86-error-body p {
-      margin: 0 0 15px 0;
-      color: var(--text-primary);
-    }
-    
-    .v86-error-causes {
-      margin: 0;
-      padding-left: 20px;
-      color: var(--text-secondary);
-    }
-    
-    .v86-error-causes li {
-      margin-bottom: 5px;
-    }
-    
-    .v86-error-actions {
-      display: flex;
-      gap: 10px;
-      padding: 20px;
-      border-top: 1px solid var(--border);
-      justify-content: flex-end;
-    }
-    
-    .v86-error-btn {
-      padding: 8px 16px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      background: var(--bg-secondary);
-      color: var(--text-primary);
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    
-    .v86-error-btn:hover {
-      background: var(--accent);
-      color: white;
-    }
-  `;
-
-  document.head.appendChild(style);
-  document.body.appendChild(dialog);
-
-  // Store references for cleanup
-  dialog.v86Style = style;
-  window.currentV86ErrorDialog = dialog;
-
-  // Set up action handlers
-  actions.forEach((action, index) => {
-    const btn = dialog.querySelectorAll('.v86-error-btn')[index];
-    btn.onclick = action.action;
-  });
-}
-
-function closeV86ErrorDialog() {
-  if (window.currentV86ErrorDialog) {
-    if (window.currentV86ErrorDialog.v86Style) {
-      window.currentV86ErrorDialog.v86Style.remove();
-    }
-    window.currentV86ErrorDialog.remove();
-    window.currentV86ErrorDialog = null;
-  }
-}
-
-function retryV86Load() {
-  closeV86ErrorDialog();
-  showToast("Retrying V86 emulator load...", "fa-redo");
-  loadV86Resources().catch(error => {
-    console.error("Retry failed:", error);
-  });
-}
-
-function reinstallV86() {
-  closeV86ErrorDialog();
-  showToast("Reinstalling V86 emulator...", "fa-download");
-
-  // Clean up existing resources
-  cleanupV86Resources();
-
-  // Remove from installed apps and reinstall
-  const index = installedApps.indexOf('v86-emulator');
-  if (index > -1) {
-    installedApps.splice(index, 1);
-    localStorage.setItem('nautilusOS_installedApps', JSON.stringify(installedApps));
-  }
-
-  // Trigger reinstallation
-  setTimeout(() => {
-    installApp('v86-emulator');
-  }, 1000);
-}
-
-function retryV86Initialization() {
-  closeV86ErrorDialog();
-  showToast("Retrying V86 initialization...", "fa-redo");
-
-  // Find the current V86 window and reinitialize
-  const v86Window = windows['v86-emulator'];
-  if (v86Window) {
-    const windowId = v86Window.dataset.windowId;
-    if (windowId && window.v86Instances && window.v86Instances[windowId]) {
-      const frontend = window.v86Instances[windowId];
-      frontend.initialize().catch(error => {
-        handleV86LoadError('INITIALIZATION_FAILED', error.message);
-      });
-    }
-  }
-}
-
-function showV86MemorySettings() {
-  closeV86ErrorDialog();
-  showToast("Opening memory settings...", "fa-memory");
-
-  // Show V86 configuration panel if available
-  const configPanel = document.getElementById('v86Config');
-  if (configPanel) {
-    configPanel.style.display = 'block';
-  }
-}
-
-function restartV86Emulator() {
-  closeV86ErrorDialog();
-  showToast("Restarting V86 emulator...", "fa-redo");
-
-  if (v86State === 'running') {
-    stopV86Emulator();
-    setTimeout(() => {
-      startV86Emulator();
-    }, 2000);
-  }
-}
-
-function resetV86Configuration() {
-  closeV86ErrorDialog();
-  showToast("Resetting V86 configuration...", "fa-cog");
-
-  // Reset memory and boot order to defaults
-  const memorySelect = document.getElementById('v86Memory');
-  const bootOrderSelect = document.getElementById('v86BootOrder');
-
-  if (memorySelect) memorySelect.value = '128';
-  if (bootOrderSelect) bootOrderSelect.value = '0x213';
-
-  showToast("V86 configuration reset to defaults", "fa-check-circle");
-}
-
-function reportV86Issue(errorType, errorMessage) {
-  closeV86ErrorDialog();
-
-  const issueData = {
-    type: errorType,
-    message: errorMessage,
-    timestamp: new Date().toISOString(),
-    userAgent: navigator.userAgent,
-    url: window.location.href
-  };
-
-  console.log("V86 Issue Report:", issueData);
-  showToast("Issue details logged to console", "fa-bug");
-}
-
-// ==================== WebLLM AI Assistant ====================
-
-let nautilusAI = {
-  engine: null,
-  messages: [],
-  isInitialized: false,
-  isInitializing: false,
-  isGenerating: false,
-  pendingTools: [],
-  toolsEnabled: true,
-  actionLog: [],
-  currentModel: 'smart' // 'fast' or 'smart' - default to smart (Qwen3 with thinking)
-};
-
-const AI_MODELS = {
-  fast: {
-    name: 'SmolLM2-360M-Instruct-q4f16_1-MLC',
-    label: 'Dumb',
-    description: 'Quick responses, less accurate',
-    icon: 'fa-bolt'
-  },
-  smart: {
-    name: 'Qwen3-0.6B-q4f16_1-MLC',
-    label: 'Smarty',
-    description: 'Advanced reasoning with thinking mode',
-    icon: 'fa-brain'
-  }
-};
-
-// OS Automation Tools - Available for AI to control the OS
-const OS_AUTOMATION_TOOLS = {
-  open_app: {
-    name: "open_app",
-    description: "Open an application in NautilusOS",
-    parameters: {
-      app_name: "string - Name of the app (e.g., 'files', 'terminal', 'settings', 'browser', 'editor', 'music', 'photos', 'calculator', 'appstore', 'cloaking', 'achievements', 'ai-snake')",
-      reason: "string - Why this app needs to be opened"
-    }
-  },
-  close_app: {
-    name: "close_app",
-    description: "Close a currently open application window",
-    parameters: {
-      app_name: "string - Name of the app to close",
-      reason: "string - Why this app needs to be closed"
-    }
-  },
-  run_terminal_command: {
-    name: "run_terminal_command",
-    description: "Execute a terminal command in NautilusOS",
-    parameters: {
-      command: "string - The terminal command to execute (e.g., 'ls', 'apps', 'help', 'date', 'whoami', 'clear')",
-      reason: "string - Why this command needs to be executed"
-    }
-  },
-  create_file: {
-    name: "create_file",
-    description: "Create a new file in the file system",
-    parameters: {
-      path: "string - Full path including filename (e.g., '/documents/note.txt')",
-      content: "string - Content to write to the file",
-      reason: "string - Why this file needs to be created"
-    }
-  },
-  read_file: {
-    name: "read_file",
-    description: "Read the contents of a file",
-    parameters: {
-      path: "string - Full path to the file to read",
-      reason: "string - Why this file needs to be read"
-    }
-  },
-  create_folder: {
-    name: "create_folder",
-    description: "Create a new folder in the file system",
-    parameters: {
-      path: "string - Full path of the folder to create",
-      reason: "string - Why this folder needs to be created"
-    }
-  },
-  delete_item: {
-    name: "delete_item",
-    description: "Delete a file or folder",
-    parameters: {
-      path: "string - Full path to the item to delete",
-      reason: "string - Why this item needs to be deleted"
-    }
-  },
-  take_screenshot: {
-    name: "take_screenshot",
-    description: "Capture a screenshot of the desktop",
-    parameters: {
-      reason: "string - Why a screenshot is needed"
-    }
-  },
-  change_setting: {
-    name: "change_setting",
-    description: "Change a system setting",
-    parameters: {
-      setting: "string - The setting to change (e.g., 'theme')",
-      value: "string - The new value for the setting",
-      reason: "string - Why this setting needs to be changed"
-    }
-  },
-  list_apps: {
-    name: "list_apps",
-    description: "List all installed applications",
-    parameters: {
-      reason: "string - Why you need to list apps"
-    }
-  },
-  list_files: {
-    name: "list_files",
-    description: "List files and folders in a directory",
-    parameters: {
-      path: "string - Directory path to list (default: '/')",
-      reason: "string - Why you need to list this directory"
-    }
-  },
-  get_system_info: {
-    name: "get_system_info",
-    description: "Get current system information (open apps, username, uptime, etc.)",
-    parameters: {
-      reason: "string - Why you need system information"
-    }
-  },
-  get_available_options: {
-    name: "get_available_options",
-    description: "Get available options for settings (themes, search engines, etc.) - USE THIS FIRST before changing settings!",
-    parameters: {
-      category: "string - Category to query: 'themes', 'apps', 'search_engines', 'settings', 'all'",
-      reason: "string - Why you need this information"
-    }
-  }
-};
-
-const NAUTILUS_SYSTEM_PROMPT = `You are the Nautilus AI Assistant, an expert guide for NautilusOS - a web-based operating system built entirely in HTML, CSS, and JavaScript.
-
-🤖 OS AUTOMATION CAPABILITIES:
-You have the ability to control and automate NautilusOS! You can execute actions on behalf of the user with their approval.
-
-IMPORTANT: When you want to perform an action, output a JSON object in your response with this structure:
-
-PREFERRED FORMAT (with XML tags):
-<tool_call>
-{
-  "tool": "tool_name_here",
-  "parameters": {
-    "param1": "value1",
-    "param2": "value2"
-  }
-}
-</tool_call>
-
-ALTERNATIVE FORMAT (bare JSON also works):
-{"tool": "tool_name_here", "parameters": {"param1": "value1", "param2": "value2"}}
-
-Both formats are supported. The system will detect and execute your tool calls automatically.
-
-Available tools:
-${Object.keys(OS_AUTOMATION_TOOLS).map(toolName => {
-  const tool = OS_AUTOMATION_TOOLS[toolName];
-  return `- ${tool.name}: ${tool.description}\n  Parameters: ${JSON.stringify(tool.parameters, null, 2)}`;
-}).join('\n\n')}
-
-TOOL USAGE GUIDELINES:
-1. Always explain what you're about to do BEFORE the tool call
-2. **IMPORTANT: Use get_available_options FIRST before changing settings!** Query available themes, apps, search engines, etc.
-3. Use tool calls when they would be helpful (e.g., if user asks to open an app, use open_app)
-4. You can make multiple tool calls in one response if needed
-5. Always provide a clear "reason" parameter explaining why the action is needed
-6. After making a tool call, explain what you did and what the result was
-7. The user must approve each action - they will see a confirmation dialog
-8. Tool results will be provided to you in a follow-up message
-
-CRITICAL FOR SETTINGS:
-- Before changing theme → use get_available_options with category='themes' to see installed themes
-- Before changing search engine → use get_available_options with category='search_engines'
-- For other settings → use get_available_options with category='settings'
-- This prevents errors from using invalid values!
-
-EXAMPLE CONVERSATIONS:
-
-Example 1 - Opening an app:
-User: "Can you open the calculator app for me?"
-You: "I'll open the Calculator app for you right away!
-
-<tool_call>
-{
-  "tool": "open_app",
-  "parameters": {
-    "app_name": "calculator",
-    "reason": "User requested to open the calculator"
-  }
-}
-</tool_call>
-
-The calculator should now be opening on your screen."
-
-Example 2 - Changing theme (CORRECT way):
-User: "Change the theme to blue"
-You: "I'll check what themes are available and change it to blue!
-
-<tool_call>
-{
-  "tool": "get_available_options",
-  "parameters": {
-    "category": "themes",
-    "reason": "Need to verify blue theme is installed before changing"
-  }
-}
-</tool_call>
-
-Once I confirm the blue theme is installed, I'll change it for you."
-
-[After getting results showing blue is installed]
-
-<tool_call>
-{
-  "tool": "change_setting",
-  "parameters": {
-    "setting": "theme",
-    "value": "blue",
-    "reason": "User requested blue theme, confirmed it's installed"
-  }
-}
-</tool_call>
-
-Example 3 - Multiple actions:
-User: "Open terminal and run the date command"
-You: "I'll open the terminal and run the date command!
-
-<tool_call>
-{
-  "tool": "open_app",
-  "parameters": {
-    "app_name": "terminal",
-    "reason": "Need terminal open to run command"
-  }
-}
-</tool_call>
-
-<tool_call>
-{
-  "tool": "run_terminal_command",
-  "parameters": {
-    "command": "date",
-    "reason": "User wants to see current date"
-  }
-}
-</tool_call>"
-
-CORE KNOWLEDGE ABOUT NAUTILUSOS:
-
-ARCHITECTURE & TECHNOLOGY:
-- NautilusOS is a complete web-based OS running entirely in the browser
-- Built with vanilla HTML, CSS, and JavaScript (no frameworks)
-- Uses local storage for persistence (localStorage and sessionStorage)
-- File system is virtual and stored in browser memory/localStorage
-- All windows, apps, and features are DOM-based and fully interactive
-- Supports multiple themes, customization, and user profiles
-
-AVAILABLE APPLICATIONS:
-1. Files - Full file explorer with folder navigation, tree sidebar, create/delete/rename operations
-2. Terminal - Command-line interface with bash-like commands
-3. Nautilus Browser - Built-in web browser with proxy support (Helios Browser embedded)
-4. Text Editor - Create and edit text files with save/load functionality
-5. Music Player - Play music from URLs or uploaded files
-6. Photos - View, upload, and manage photos with screenshot capability
-7. Settings - Customize themes, time format, desktop icons, wallpapers, cloaking
-8. Calculator - Standard calculator with history
-9. Help - Comprehensive documentation and keyboard shortcuts
-10. What's New - Feature showcase carousel with illustrations
-11. App Store - Install themes, apps, and games
-12. Achievements - Track progress and unlock badges
-13. Cloaking - Tab disguise and panic key features
-14. Task Manager - View and manage running applications
-15. Snap Manager - Configure window snapping layouts and keybinds
-16. Startup Apps - Configure apps to launch on boot
-17. V86 Emulator - Run actual operating systems in the browser
-18. AI Snake Learning - Neural network that learns to play Snake (by lanefiedler-731)
-19. Nautilus AI Assistant - That's me! Your helpful AI guide (by lanefiedler-731)
-
-WINDOW MANAGEMENT:
-- Fully draggable windows with title bar drag
-- Resizable from any edge or corner
-- Minimize, maximize, and close buttons
-- Focus management with visual indicators
-- Windows appear in taskbar when open
-- Snap-to-edge functionality (configurable in Snap Manager)
-- Multiple windows can be open simultaneously
-
-FILE SYSTEM:
-- Virtual hierarchical file system
-- Default folders: Photos, TextEditor, Documents, etc.
-- Create folders and files through Files app or Text Editor
-- Files are stored as objects in localStorage
-- Photos stored as blob URLs
-- File operations: create, delete, rename, move, copy
-- Tree view sidebar for easy navigation
-
-CUSTOMIZATION & THEMING:
-Available themes: Dark (default), Light, Golden, Red, Blue, Purple, Green, Liquid Glass
-- Install themes from App Store
-- Apply themes in Settings
-- Custom wallpapers for desktop and login screen
-- Profile pictures
-- Desktop icon visibility toggle
-- Clock format (12h/24h, with/without seconds)
-- Accent colors vary by theme
-
-BOOT & LOGIN:
-- Bootloader with two options: GUI mode or Command Line mode
-- Account setup wizard on first launch
-- Username and password support (or passwordless)
-- Login screen with clock and system info
-- Boot preference saved to localStorage
-- Uptime tracking from boot time
-
-TASKBAR FEATURES:
-- Start menu with app grid and user info
-- Running app indicators
-- Sign out / shut down buttons
-- Quick actions panel (screenshots, close all windows)
-- System clock
-- Notification center
-- Search apps functionality
-
-SETTINGS CATEGORIES:
-1. Appearance - Themes, wallpapers, desktop icons
-2. Time & Date - Clock format, seconds display
-3. Account - Username, profile picture, password
-4. Cloaking - Tab disguise, panic keys, auto-rotation
-5. Import/Export - Backup and restore profiles
-6. Advanced - Reset data, developer options
-
-CLOAKING & SECURITY:
-- Tab disguise to mimic other websites (Google, Drive, Classroom, etc.)
-- Custom tab titles and favicons
-- Panic key support for instant redirects
-- Auto-rotate disguises at configurable intervals
-- Helps bypass school/workplace restrictions
-
-ACHIEVEMENTS SYSTEM:
-- Unlock badges for milestones
-- Categories: Productivity, Exploration, Time-Based, Easter Eggs
-- Persistent across data resets
-- Examples: First File Created, Theme Changer, Early Bird, Night Owl
-
-KEYBOARD SHORTCUTS:
-- Snap windows: Ctrl+Alt+Arrow Keys
-- Quick app launch from Start menu search
-- Focus windows with taskbar clicks
-- Context menus with right-click
-
-BROWSER FEATURES:
-- Embedded Helios Browser with full proxy support
-- Multiple tabs support
-- URL navigation
-- Back/forward buttons
-- Tab cloaking integration
-
-TERMINAL COMMANDS:
-Common commands: ls, cd, mkdir, rm, cat, echo, clear, help, pwd, whoami
-- Bash-like syntax and behavior
-- File system integration
-- Command history
-
-TECHNICAL DETAILS:
-- Uses CSS variables for theming
-- FontAwesome icons throughout
-- Smooth animations and transitions
-- Responsive to different screen sizes
-- Service Worker registration for offline support
-- LocalStorage keys prefixed with "nautilusOS_"
-- File protocol warning for features requiring web server
-
-APP STORE:
-- Install additional themes beyond default dark theme
-- Games: Tic-Tac-Toe, AI Snake Learning
-- Apps: V86 Emulator, Task Manager, Snap Manager, Startup Apps
-- Each item shows install status and description
-
-EXPORT/IMPORT PROFILES:
-- Export entire system state to JSON file
-- Includes: files, settings, themes, installed apps, wallpapers
-- Import profile to restore on any device
-- Great for backups or sharing configurations
-
-ADVANCED FEATURES:
-- Window snapping with customizable layouts
-- Startup apps run automatically on boot
-- Task manager shows resource usage
-- Screenshots using browser screen capture API
-- Drag-and-drop file uploads for photos
-- Context menus for desktop and file operations
-
-DEVELOPER INFO:
-- NautilusOS created by lanefiedler-731, x8r, and dinguschan-owo
-- Open source on GitHub
-- No external frameworks (vanilla JS)
-- Community contributions welcome
-- Apps can be created by community (Nautilus AI Assistant by lanefiedler-731)
-
-THINKING MODE (QWEN3 CAPABILITY):
-You have advanced reasoning capabilities! For complex tasks, you can use thinking mode to show your reasoning process:
-
-- Wrap your internal reasoning in <think></think> tags
-- Use thinking for: complex calculations, multi-step logic, planning, analysis, debugging
-- Think through problems step-by-step before giving your final answer
-- Thinking content will be displayed separately in a collapsible section
-- Your final response (outside <think> tags) should be clear and concise
-
-Example:
-<think>
-Let me analyze the user's request:
-1. They want to change the theme
-2. I need to check available themes first using get_available_options
-3. Then I'll change the setting if the theme exists
-4. This requires two tool calls in sequence
-</think>
-
-I'll help you change the theme! First, let me check what themes are available...
-
-When helping users:
-1. Be specific and detailed about features
-2. Provide step-by-step instructions when needed
-3. Reference exact app names and menu locations
-4. Explain both basic and advanced features
-5. Suggest related features users might find helpful
-6. Be enthusiastic about NautilusOS capabilities
-7. If unsure about something, admit it honestly
-8. Use thinking mode for complex reasoning and problem-solving
-
-Your goal is to make users feel confident and excited about using NautilusOS!`;
-
-async function initializeNautilusAI(modelKey = null) {
-  if (nautilusAI.isInitializing) return;
-  
-  // Allow re-initialization with different model
-  const isModelSwitch = nautilusAI.isInitialized && modelKey !== null;
-  
-  if (nautilusAI.isInitialized && !isModelSwitch) return;
-  
-  nautilusAI.isInitializing = true;
-  const statusEl = document.getElementById('aiStatus');
-  const sendBtn = document.getElementById('aiSendBtn');
-  const inputEl = document.getElementById('aiInput');
-  
-  try {
-    // Use selected model or current model
-    const selectedModel = modelKey || nautilusAI.currentModel;
-    const modelConfig = AI_MODELS[selectedModel];
-    
-    updateAiStatus(`Loading WebLLM library...`, true);
-    
-    // Load WebLLM from CDN with ES modules support (only once)
-    if (!window.mlcai) {
-      await new Promise((resolve, reject) => {
-        const script = document.createElement('script');
-        script.type = 'module';
-        script.textContent = `
-          import * as webllm from "https://esm.run/@mlc-ai/web-llm";
-          window.mlcai = webllm;
-        `;
-        script.onload = resolve;
-        script.onerror = () => reject(new Error('Failed to load WebLLM library'));
-        document.head.appendChild(script);
-        
-        // Wait for window.mlcai to be available
-        const checkInterval = setInterval(() => {
-          if (window.mlcai) {
-            clearInterval(checkInterval);
-            resolve();
-          }
-        }, 50); // Reduced from 100ms for faster check
-        
-        // Timeout after 10 seconds
-        setTimeout(() => {
-          clearInterval(checkInterval);
-          if (!window.mlcai) {
-            reject(new Error('WebLLM library load timeout'));
-          }
-        }, 10000);
-      });
-    }
-    
-    updateAiStatus(`Initializing ${modelConfig.label} model...`, true);
-    
-    const { CreateMLCEngine } = window.mlcai;
-    
-    // Check WebGPU toggle (default to true for speed)
-    const useWebGPU = document.getElementById('aiWebGPUToggle')?.checked !== false;
-    
-    // Dispose old engine if switching models
-    if (isModelSwitch && nautilusAI.engine) {
-      try {
-        await nautilusAI.engine.unload();
-      } catch (e) {
-        console.warn('Error unloading previous model:', e);
-      }
-    }
-    
-    // Create engine with optimizations for faster first token
-    nautilusAI.engine = await CreateMLCEngine(modelConfig.name, {
-      initProgressCallback: (progress) => {
-        updateAiStatus(`Loading ${modelConfig.label}: ${Math.round(progress.progress * 100)}%`, true);
-      },
-      useWebGPU: useWebGPU,
-      // Optimizations for faster initialization and TTFT
-      logLevel: 'ERROR', // Reduce logging overhead
-      temperature: 0.7, // Optimal for thinking mode
-      top_p: 0.95,
-      // Enable prompt caching for faster subsequent requests
-      caching: true
-    });
-    
-    // Reset or preserve conversation history
-    if (isModelSwitch) {
-      // Keep conversation history when switching models
-      const oldMessages = nautilusAI.messages.filter(m => m.role !== 'system');
-      nautilusAI.messages = [
-        { role: "system", content: NAUTILUS_SYSTEM_PROMPT },
-        ...oldMessages
-      ];
-    } else {
-      // Fresh start
-      nautilusAI.messages = [
-        { role: "system", content: NAUTILUS_SYSTEM_PROMPT }
-      ];
-    }
-    
-    nautilusAI.currentModel = selectedModel;
-    nautilusAI.isInitialized = true;
-    nautilusAI.isInitializing = false;
-    updateAiStatus(`${modelConfig.label} Ready`, false);
-    
-    if (sendBtn) sendBtn.disabled = false;
-    if (inputEl) {
-      inputEl.disabled = false;
-      inputEl.focus();
-    }
-    
-    if (isModelSwitch) {
-      showToast(`Switched to ${modelConfig.label}`, modelConfig.icon);
-    } else {
-      showToast(`${modelConfig.label} is ready!`, 'fa-robot');
-    }
-    
-  } catch (error) {
-    console.error('Failed to initialize Nautilus AI:', error);
-    nautilusAI.isInitializing = false;
-    updateAiStatus(`Error: ${error.message}`, false, true);
-    showToast('Failed to load AI model. Check console for details.', 'fa-exclamation-triangle');
-    
-    // Re-enable input so user can try again
-    if (sendBtn) sendBtn.disabled = false;
-    if (inputEl) inputEl.disabled = false;
-  }
-}
-
-async function switchAIModel(modelKey) {
-  if (nautilusAI.isGenerating) {
-    showToast('Cannot switch models while generating response', 'fa-exclamation-circle');
-    // Reset select to current model
-    const select = document.getElementById('aiModelSelect');
-    if (select) select.value = nautilusAI.currentModel;
-    return;
-  }
-  
-  if (modelKey === nautilusAI.currentModel) return;
-  
-  const modelConfig = AI_MODELS[modelKey];
-  updateAiStatus(`Switching to ${modelConfig.label}...`, true);
-  
-  nautilusAI.isInitialized = false;
-  await initializeNautilusAI(modelKey);
-}
-
-function updateAiStatus(message, loading = false, error = false) {
-  const statusEl = document.getElementById('aiStatus');
-  if (!statusEl) return;
-  
-  const color = error ? '#ef4444' : (loading ? '#64748b' : 'var(--accent)');
-  const spinner = loading ? `
-    <div class="multi-ring-spinner" style="position: relative; width: 40px; height: 40px;">
-      <div style="position: absolute; width: 100%; height: 100%; border: 3px solid transparent; border-top-color: #7dd3c0; border-radius: 50%; animation: spin 1.2s cubic-bezier(0.5, 0, 0.5, 1) infinite;"></div>
-      <div style="position: absolute; width: 80%; height: 80%; top: 10%; left: 10%; border: 3px solid transparent; border-top-color: #66d9ef; border-radius: 50%; animation: spin 1s cubic-bezier(0.5, 0, 0.5, 1) infinite reverse;"></div>
-      <div style="position: absolute; width: 60%; height: 60%; top: 20%; left: 20%; border: 3px solid transparent; border-top-color: #a6e3a1; border-radius: 50%; animation: spin 0.8s cubic-bezier(0.5, 0, 0.5, 1) infinite;"></div>
-      <div style="position: absolute; width: 40%; height: 40%; top: 30%; left: 30%; border: 3px solid transparent; border-top-color: #f5c2e7; border-radius: 50%; animation: spin 0.6s cubic-bezier(0.5, 0, 0.5, 1) infinite reverse;"></div>
-    </div>
-  ` : '<i class="fas fa-check-circle"></i>';
-  
-  statusEl.innerHTML = `
-    <div style="display: flex; align-items: center; gap: 12px; font-size: 12px; color: ${color};">
-      ${spinner}
-      <span>${message}</span>
-    </div>
-  `;
-}
-
-async function sendAiMessage() {
-  const inputEl = document.getElementById('aiInput');
-  const sendBtn = document.getElementById('aiSendBtn');
-  
-  if (!inputEl || !sendBtn) return;
-  
-  const userMessage = inputEl.value.trim();
-  if (!userMessage) return;
-  
-  if (!nautilusAI.isInitialized) {
-    await initializeNautilusAI();
-    if (!nautilusAI.isInitialized) return;
-  }
-  
-  if (nautilusAI.isGenerating) {
-    showToast('Please wait for the current response to complete', 'fa-hourglass-half');
-    return;
-  }
-  
-  // Add user message to chat
-  addAiChatMessage(userMessage, true);
-  inputEl.value = '';
-  inputEl.style.height = 'auto';
-  
-  // Disable input while generating
-  nautilusAI.isGenerating = true;
-  sendBtn.disabled = true;
-  inputEl.disabled = true;
-  updateAiStatus('Thinking...', true);
-  
-  try {
-    // Add user message to conversation history
-    nautilusAI.messages.push({ role: "user", content: userMessage });
-    
-    // Create placeholder message for streaming
-    const chatContainer = document.getElementById('aiChatMessages');
-    const messageDiv = document.createElement('div');
-    messageDiv.style.cssText = `
-      background: rgba(125, 211, 192, 0.1);
-      border: 1px solid rgba(125, 211, 192, 0.3);
-      border-radius: 10px;
-      padding: 15px;
-      animation: slideIn 0.3s ease-out;
-    `;
-    
-    const headerDiv = document.createElement('div');
-    headerDiv.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px;';
-    headerDiv.innerHTML = `
-      <i class="fas fa-robot" style="color: var(--accent); font-size: 18px;"></i>
-      <strong style="color: var(--accent);">Nautilus AI</strong>
-    `;
-    
-    const contentDiv = document.createElement('div');
-    contentDiv.style.cssText = 'color: #cbd5e1; line-height: 1.6;';
-
-    const textDiv = document.createElement('div');
-    textDiv.className = 'ai-response-text';
-    textDiv.style.cssText = 'white-space: pre-wrap; word-wrap: break-word;';
-    contentDiv.appendChild(textDiv);
-    
-    messageDiv.appendChild(headerDiv);
-    messageDiv.appendChild(contentDiv);
-    chatContainer.appendChild(messageDiv);
-    chatContainer.scrollTop = chatContainer.scrollHeight;
-    
-    // Generate response with streaming - optimized settings based on model
-    const isFastModel = nautilusAI.currentModel === 'fast';
-    const isSmartModel = nautilusAI.currentModel === 'smart';
-    
-    const completionConfig = {
-      messages: nautilusAI.messages,
-      temperature: isFastModel ? 0.5 : 0.7, // Lower temp for faster model = more focused
-      max_tokens: isFastModel ? 2048 : 4096, // Fewer tokens for fast model
-      stream: true,
-      // Optimizations for faster first token
-      top_p: isFastModel ? 0.9 : 0.95,
-      frequency_penalty: 0,
-      presence_penalty: 0,
-      // Enable streaming for lower latency
-      stream_options: { include_usage: false }
-    };
-    
-    // Enable thinking mode for smart model (Qwen3)
-    if (isSmartModel) {
-      completionConfig.extra_body = {
-        enable_thinking: true,
-        // Additional TTFT optimizations
-        use_beam_search: false,
-        early_stopping: false
-      };
-    }
-    
-    const completion = await nautilusAI.engine.chat.completions.create(completionConfig);
-    
-    let fullResponse = '';
-    let thinkingSection = null;
-    let thinkContentDiv = null;
-    let thinkingSummary = null;
-    
-    for await (const chunk of completion) {
-      const delta = chunk.choices[0]?.delta?.content || '';
-      if (!delta) continue;
-
-      fullResponse += delta;
-
-      const thinkStartIndex = fullResponse.indexOf('<think>');
-      const thinkEndIndex = fullResponse.indexOf('</think>');
-
-      let visibleContent = fullResponse;
-      let currentThinking = '';
-
-      if (thinkStartIndex !== -1) {
-        if (!thinkingSection) {
-          thinkingSection = document.createElement('details');
-          thinkingSection.open = true;
-          thinkingSection.style.cssText = 'margin: 0 0 15px 0; padding: 12px; background: rgba(125, 211, 192, 0.08); border: 1px solid rgba(125, 211, 192, 0.25); border-radius: 8px; order: -1;';
-
-          thinkingSummary = document.createElement('summary');
-          thinkingSummary.style.cssText = 'cursor: pointer; color: var(--accent); font-weight: bold; user-select: none; list-style: none; display: flex; align-items: center; gap: 8px;';
-          thinkingSummary.innerHTML = '<i class="fas fa-brain"></i> Thinking<span class="thinking-dots"></span>';
-
-          thinkingSummary.addEventListener('click', (e) => {
-            e.preventDefault();
-            thinkingSection.open = !thinkingSection.open;
-          });
-
-          thinkContentDiv = document.createElement('div');
-          thinkContentDiv.style.cssText = 'margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(125, 211, 192, 0.15); color: #94a3b8; font-style: italic; white-space: pre-wrap; line-height: 1.6;';
-          thinkContentDiv.className = 'thinking-content';
-
-          thinkingSection.appendChild(thinkingSummary);
-          thinkingSection.appendChild(thinkContentDiv);
-
-          contentDiv.style.display = 'flex';
-          contentDiv.style.flexDirection = 'column';
-          contentDiv.insertBefore(thinkingSection, textDiv);
-
-          if (!document.getElementById('thinking-dots-style')) {
-            const style = document.createElement('style');
-            style.id = 'thinking-dots-style';
-            style.textContent = `
-              @keyframes thinkingDots {
-                0% { content: ''; }
-                25% { content: '.'; }
-                50% { content: '..'; }
-                75% { content: '...'; }
-                100% { content: ''; }
-              }
-              .thinking-dots::after {
-                content: '';
-                animation: thinkingDots 1.5s infinite;
-              }
-              summary::-webkit-details-marker {
-                display: none;
-              }
-            `;
-            document.head.appendChild(style);
-          }
-        }
-
-        if (thinkEndIndex === -1) {
-          currentThinking = fullResponse.substring(thinkStartIndex + 7);
-          visibleContent = fullResponse.substring(0, thinkStartIndex);
-        } else {
-          currentThinking = fullResponse.substring(thinkStartIndex + 7, thinkEndIndex);
-          visibleContent = fullResponse.substring(0, thinkStartIndex) + fullResponse.substring(thinkEndIndex + 8);
-          if (thinkingSummary) {
-            thinkingSummary.innerHTML = '<i class="fas fa-lightbulb"></i> Thought';
-          }
-        }
-
-        if (thinkContentDiv) {
-          thinkContentDiv.textContent = currentThinking;
-        }
-      }
-
-      textDiv.textContent = visibleContent;
-      chatContainer.scrollTop = chatContainer.scrollHeight;
-    }
-    
-    // Add AI response to conversation history
-    nautilusAI.messages.push({ role: "assistant", content: fullResponse });
-    
-    // Process tool calls if any
-    const toolCalls = parseToolCalls(fullResponse);
-    if (toolCalls.length > 0 && nautilusAI.toolsEnabled) {
-      updateAiStatus('Processing tool calls...', true);
-      
-      // Remove tool call tags from visible text
-      const cleanedText = removeToolCallsFromText(fullResponse);
-      textDiv.textContent = cleanedText;
-      
-      // Process each tool call with user approval
-      for (const toolCall of toolCalls) {
-        await new Promise((resolve) => {
-          showToolApprovalDialog(
-            toolCall,
-            async () => {
-              // User approved - execute the tool
-              updateAiStatus(`Executing: ${toolCall.tool}...`, true);
-              const result = await executeToolCall(toolCall);
-              addToolFeedbackToChat(toolCall, result);
-              
-              // Add tool result to conversation for AI context
-              nautilusAI.messages.push({
-                role: "user",
-                content: `[Tool Execution Result]\nTool: ${toolCall.tool}\nSuccess: ${result.success}\nMessage: ${result.message}\n${result.details ? 'Details: ' + result.details : ''}`
-              });
-              
-              resolve();
-            },
-            () => {
-              // User rejected - show feedback
-              addToolFeedbackToChat(toolCall, {
-                success: false,
-                message: `⛔ Action rejected by user`,
-                details: `The ${toolCall.tool} action was not executed.`
-              });
-              
-              // Inform AI that tool was rejected
-              nautilusAI.messages.push({
-                role: "user",
-                content: `[Tool Execution Result]\nTool: ${toolCall.tool}\nSuccess: false\nMessage: User rejected this action`
-              });
-              
-              resolve();
-            }
-          );
-        });
-      }
-    }
-    
-    updateAiStatus('AI Assistant Ready', false);
-    
-  } catch (error) {
-    console.error('AI generation error:', error);
-    addAiChatMessage('Sorry, I encountered an error while generating a response. Please try again.', false, true);
-    updateAiStatus('Error occurred', false, true);
-  } finally {
-    nautilusAI.isGenerating = false;
-    sendBtn.disabled = false;
-    inputEl.disabled = false;
-    inputEl.focus();
-  }
-}
-
-function addAiChatMessage(message, isUser = false, isError = false) {
-  const chatContainer = document.getElementById('aiChatMessages');
-  if (!chatContainer) return;
-  
-  const messageDiv = document.createElement('div');
-  messageDiv.style.cssText = `
-    background: ${isUser ? 'rgba(125, 211, 192, 0.15)' : (isError ? 'rgba(239, 68, 68, 0.15)' : 'rgba(125, 211, 192, 0.1)')};
-    border: 1px solid ${isUser ? 'rgba(125, 211, 192, 0.4)' : (isError ? 'rgba(239, 68, 68, 0.4)' : 'rgba(125, 211, 192, 0.3)')};
-    border-radius: 10px;
-    padding: 15px;
-    animation: slideIn 0.3s ease-out;
-  `;
-  
-  const headerDiv = document.createElement('div');
-  headerDiv.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px;';
-  headerDiv.innerHTML = `
-    <i class="fas ${isUser ? 'fa-user' : 'fa-robot'}" style="color: ${isUser ? 'var(--accent)' : (isError ? '#ef4444' : 'var(--accent)')}; font-size: 18px;"></i>
-    <strong style="color: ${isUser ? 'var(--accent)' : (isError ? '#ef4444' : 'var(--accent)')}">${isUser ? 'You' : 'Nautilus AI'}</strong>
-  `;
-  
-  const contentDiv = document.createElement('div');
-  contentDiv.style.cssText = 'color: #cbd5e1; line-height: 1.6; white-space: pre-wrap; word-wrap: break-word;';
-  contentDiv.textContent = message;
-  
-  messageDiv.appendChild(headerDiv);
-  messageDiv.appendChild(contentDiv);
-  chatContainer.appendChild(messageDiv);
-  
-  // Scroll to bottom
-  chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-function sendQuickQuestion(question) {
-  const inputEl = document.getElementById('aiInput');
-  if (!inputEl) return;
-  
-  inputEl.value = question;
-  sendAiMessage();
-}
-
-function clearAiChat() {
-  const chatContainer = document.getElementById('aiChatMessages');
-  if (!chatContainer) return;
-  
-  // Clear all messages except the welcome message
-  const currentModelConfig = AI_MODELS[nautilusAI.currentModel] || AI_MODELS['smart'];
-  chatContainer.innerHTML = `
-    <div style="background: rgba(125, 211, 192, 0.1); border: 1px solid rgba(125, 211, 192, 0.3); border-radius: 10px; padding: 15px;">
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-        <i class="fas fa-robot" style="color: var(--accent); font-size: 18px;"></i>
-        <strong style="color: var(--accent);">Nautilus AI</strong>
-      </div>
-      <div style="color: #cbd5e1; line-height: 1.6;">
-        Hello! I'm your Nautilus AI Assistant. I can help you understand and navigate NautilusOS.<br><br>
-        <strong style="color: var(--accent);"><i class="fas ${currentModelConfig.icon}"></i> Using: ${currentModelConfig.label}</strong> - ${currentModelConfig.description}<br><br>
-        <strong style="color: var(--accent);">🤖 OS Automation Enabled!</strong><br>
-        I can control NautilusOS for you! Just ask me to do something and I'll request your approval before taking action.<br><br>
-        <strong style="color: var(--accent);">💭 Thinking Mode Active!</strong><br>
-        I can show my reasoning process for complex tasks. Watch for the collapsible "Thinking" section!<br><br>
-        Try: "Open calculator" or "List available themes"
-      </div>
-    </div>
-  `;
-  
-  // Reset conversation history (keep system prompt)
-  nautilusAI.messages = [
-    { role: "system", content: NAUTILUS_SYSTEM_PROMPT }
-  ];
-  
-  showToast('Chat cleared', 'fa-trash');
-}
-
-// ==================== OS Automation Tool Execution ====================
-
-function parseToolCalls(text) {
-  const toolCalls = [];
-  
-  // Method 1: Try to find tool calls wrapped in XML tags (preferred format)
-  const xmlRegex = /<tool_call>([\s\S]*?)<\/tool_call>/g;
-  let match;
-  
-  while ((match = xmlRegex.exec(text)) !== null) {
-    try {
-      const toolData = JSON.parse(match[1].trim());
-      if (toolData.tool && toolData.parameters) {
-        toolCalls.push(toolData);
-      }
-    } catch (e) {
-      console.error('Failed to parse XML-wrapped tool call:', e);
-    }
-  }
-  
-  // Method 2: If no XML tags found, look for bare JSON objects with "tool" and "parameters"
-  if (toolCalls.length === 0) {
-    // Strategy: Find all potential JSON objects and validate them
-    // Look for patterns that start with { and contain "tool" key
-    const lines = text.split('\n');
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      
-      // Check if line looks like a tool call (starts with { and contains "tool")
-      if (line.startsWith('{') && line.includes('"tool"')) {
-        try {
-          // Try to parse the entire line as JSON
-          const toolData = JSON.parse(line);
-          if (toolData.tool && toolData.parameters && typeof toolData.parameters === 'object') {
-            toolCalls.push(toolData);
-          }
-        } catch (e) {
-          // If single line fails, try to find a complete JSON object across multiple lines
-          let jsonStr = line;
-          let braceCount = (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
-          
-          // Collect lines until braces are balanced
-          let j = i + 1;
-          while (braceCount > 0 && j < lines.length) {
-            jsonStr += '\n' + lines[j];
-            braceCount += (lines[j].match(/\{/g) || []).length;
-            braceCount -= (lines[j].match(/\}/g) || []).length;
-            j++;
-          }
-          
-          try {
-            const toolData = JSON.parse(jsonStr);
-            if (toolData.tool && toolData.parameters && typeof toolData.parameters === 'object') {
-              toolCalls.push(toolData);
-              i = j - 1; // Skip the lines we just processed
-            }
-          } catch (e2) {
-            // Not a valid tool call, continue
-          }
-        }
-      }
-    }
-  }
-  
-  console.log(`Parsed ${toolCalls.length} tool call(s):`, toolCalls);
-  return toolCalls;
-}
-
-function removeToolCallsFromText(text) {
-  // Remove XML-wrapped tool calls
-  let cleaned = text.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
-  
-  // Also remove bare JSON tool calls by parsing the same way
-  const lines = cleaned.split('\n');
-  const filteredLines = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    // Check if line looks like a tool call
-    if (line.startsWith('{') && line.includes('"tool"')) {
-      try {
-        const toolData = JSON.parse(line);
-        if (toolData.tool && toolData.parameters) {
-          continue; // Skip this line, it's a tool call
-        }
-      } catch (e) {
-        // Try multi-line parsing
-        let jsonStr = line;
-        let braceCount = (line.match(/\{/g) || []).length - (line.match(/\}/g) || []).length;
-        let j = i + 1;
-        
-        while (braceCount > 0 && j < lines.length) {
-          jsonStr += '\n' + lines[j];
-          braceCount += (lines[j].match(/\{/g) || []).length;
-          braceCount -= (lines[j].match(/\}/g) || []).length;
-          j++;
-        }
-        
-        try {
-          const toolData = JSON.parse(jsonStr);
-          if (toolData.tool && toolData.parameters) {
-            i = j - 1; // Skip all these lines
-            continue;
-          }
-        } catch (e2) {
-          // Not a tool call, keep the line
-        }
-      }
-    }
-    
-    filteredLines.push(lines[i]);
-  }
-  
-  return filteredLines.join('\n').trim();
-}
-
-async function executeToolCall(toolCall) {
-  const { tool, parameters } = toolCall;
-  
-  logAction(`Executing tool: ${tool}`, parameters);
-  
-  try {
-    switch(tool) {
-      case 'open_app':
-        return await executeTool_OpenApp(parameters);
-      case 'close_app':
-        return await executeTool_CloseApp(parameters);
-      case 'run_terminal_command':
-        return await executeTool_RunTerminalCommand(parameters);
-      case 'create_file':
-        return await executeTool_CreateFile(parameters);
-      case 'read_file':
-        return await executeTool_ReadFile(parameters);
-      case 'create_folder':
-        return await executeTool_CreateFolder(parameters);
-      case 'delete_item':
-        return await executeTool_DeleteItem(parameters);
-      case 'take_screenshot':
-        return await executeTool_TakeScreenshot(parameters);
-      case 'change_setting':
-        return await executeTool_ChangeSetting(parameters);
-      case 'list_apps':
-        return await executeTool_ListApps(parameters);
-      case 'list_files':
-        return await executeTool_ListFiles(parameters);
-      case 'get_system_info':
-        return await executeTool_GetSystemInfo(parameters);
-      case 'get_available_options':
-        return await executeTool_GetAvailableOptions(parameters);
-      default:
-        return { success: false, message: `Unknown tool: ${tool}` };
-    }
-  } catch (error) {
-    return { success: false, message: `Error executing ${tool}: ${error.message}` };
-  }
-}
-
-// Tool execution functions
-function executeTool_OpenApp(params) {
-  const { app_name } = params;
-  openApp(app_name);
-  return { 
-    success: true, 
-    message: `✅ Opened ${app_name} application`,
-    details: `The ${app_name} app is now open and visible on your screen.`
-  };
-}
-
-function executeTool_CloseApp(params) {
-  const { app_name } = params;
-  const windows = document.querySelectorAll('.window');
-  let closed = false;
-  
-  windows.forEach(win => {
-    const title = win.querySelector('.window-title')?.textContent?.toLowerCase();
-    if (title && title.includes(app_name.toLowerCase())) {
-      win.remove();
-      closed = true;
-    }
-  });
-  
-  if (closed) {
-    return { 
-      success: true, 
-      message: `✅ Closed ${app_name} application`,
-      details: `The ${app_name} window has been closed.`
-    };
-  } else {
-    return { 
-      success: false, 
-      message: `⚠️ Could not find open ${app_name} window`,
-      details: `No window with that app name was found.`
-    };
-  }
-}
-
-function executeTool_RunTerminalCommand(params) {
-  const { command } = params;
-  
-  // Open terminal if not already open
-  const terminalOpen = Array.from(document.querySelectorAll('.window')).some(
-    win => win.querySelector('.window-title')?.textContent?.includes('Terminal')
-  );
-  
-  if (!terminalOpen) {
-    openApp('terminal');
-  }
-  
-  // Wait a bit for terminal to open, then execute command
-  setTimeout(() => {
-    const terminalInput = document.querySelector('#terminalInput');
-    const terminal = document.getElementById('terminalContent');
-    
-    if (terminalInput && terminal) {
-      // Add command to terminal display
-      const cmdLine = document.createElement('div');
-      cmdLine.className = 'terminal-line';
-      cmdLine.innerHTML = `<span class="terminal-prompt">user@nautilusos:~$ </span>${command}`;
-      terminal.insertBefore(cmdLine, terminal.lastElementChild);
-      
-      // Execute the command logic (simplified version)
-      const output = document.createElement('div');
-      output.className = 'terminal-line';
-      
-      if (command === 'help') {
-        output.innerHTML = "Available commands:<br>help, ls, apps, themes, clear, date, whoami, reset-boot, echo";
-      } else if (command === 'date') {
-        output.textContent = new Date().toString();
-      } else if (command === 'whoami') {
-        output.textContent = localStorage.getItem('nOS_username') || 'user';
-      } else if (command === 'apps') {
-        output.innerHTML = '<span style="color: var(--accent);">Installed Applications:</span><br>Files, Terminal, Browser, Settings, Text Editor, Music, Photos, Calculator, App Store';
-      } else {
-        output.textContent = `Executed: ${command}`;
-      }
-      
-      terminal.insertBefore(output, terminal.lastElementChild);
-      terminal.scrollTop = terminal.scrollHeight;
-    }
-  }, 300);
-  
-  return { 
-    success: true, 
-    message: `✅ Executed terminal command: ${command}`,
-    details: `Command "${command}" was executed in the terminal.`
-  };
-}
-
-function executeTool_CreateFile(params) {
-  const { path, content } = params;
-  
-  try {
-    const parts = path.split('/').filter(p => p);
-    const filename = parts.pop();
-    const folderPath = '/' + parts.join('/');
-    
-    let currentLevel = fileSystem;
-    for (const part of parts) {
-      if (!currentLevel[part]) {
-        currentLevel[part] = { type: 'folder', children: {} };
-      }
-      currentLevel = currentLevel[part].children;
-    }
-    
-    currentLevel[filename] = { 
-      type: 'file', 
-      content: content,
-      modified: new Date().toISOString()
-    };
-    
-    saveFileSystem();
-    
-    return { 
-      success: true, 
-      message: `✅ Created file: ${path}`,
-      details: `File created with ${content.length} characters of content.`
-    };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: `❌ Failed to create file: ${error.message}`,
-      details: error.message
-    };
-  }
-}
-
-function executeTool_ReadFile(params) {
-  const { path } = params;
-  
-  try {
-    const parts = path.split('/').filter(p => p);
-    let currentLevel = fileSystem;
-    
-    for (const part of parts) {
-      if (!currentLevel[part]) {
-        throw new Error('File not found');
-      }
-      if (currentLevel[part].type === 'folder') {
-        currentLevel = currentLevel[part].children;
-      } else {
-        currentLevel = currentLevel[part];
-        break;
-      }
-    }
-    
-    if (currentLevel.type !== 'file') {
-      throw new Error('Path is not a file');
-    }
-    
-    return { 
-      success: true, 
-      message: `✅ Read file: ${path}`,
-      details: `File content:\n${currentLevel.content || '(empty file)'}`
-    };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: `❌ Failed to read file: ${error.message}`,
-      details: error.message
-    };
-  }
-}
-
-function executeTool_CreateFolder(params) {
-  const { path } = params;
-  
-  try {
-    const parts = path.split('/').filter(p => p);
-    let currentLevel = fileSystem;
-    
-    for (const part of parts) {
-      if (!currentLevel[part]) {
-        currentLevel[part] = { type: 'folder', children: {} };
-      }
-      currentLevel = currentLevel[part].children;
-    }
-    
-    saveFileSystem();
-    
-    return { 
-      success: true, 
-      message: `✅ Created folder: ${path}`,
-      details: `Folder created successfully.`
-    };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: `❌ Failed to create folder: ${error.message}`,
-      details: error.message
-    };
-  }
-}
-
-function executeTool_DeleteItem(params) {
-  const { path } = params;
-  
-  try {
-    const parts = path.split('/').filter(p => p);
-    const itemName = parts.pop();
-    
-    let currentLevel = fileSystem;
-    for (const part of parts) {
-      if (!currentLevel[part]) {
-        throw new Error('Path not found');
-      }
-      currentLevel = currentLevel[part].children;
-    }
-    
-    if (!currentLevel[itemName]) {
-      throw new Error('Item not found');
-    }
-    
-    delete currentLevel[itemName];
-    saveFileSystem();
-    
-    return { 
-      success: true, 
-      message: `✅ Deleted: ${path}`,
-      details: `Item deleted successfully.`
-    };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: `❌ Failed to delete item: ${error.message}`,
-      details: error.message
-    };
-  }
-}
-
-function executeTool_TakeScreenshot(params) {
-  takeScreenshot();
-  return { 
-    success: true, 
-    message: `✅ Screenshot captured`,
-    details: `Screenshot has been saved to your downloads.`
-  };
-}
-
-function executeTool_ChangeSetting(params) {
-  const { setting, value } = params;
-  
-  try {
-    // Theme setting
-    if (setting === 'theme') {
-      // Check if theme is installed
-      if (!installedThemes.includes(value) && value !== 'dark') {
-        return {
-          success: false,
-          message: `❌ Theme '${value}' is not installed`,
-          details: `Available themes: dark, ${installedThemes.join(', ')}. Use get_available_options to see all themes.`
-        };
-      }
-      
-      const themeLink = document.getElementById('themeLink');
-      if (themeLink) {
-        themeLink.href = value === 'dark' ? '' : `/themes/${value}.css`;
-        localStorage.setItem('nOS_selectedTheme', value);
-        return { 
-          success: true, 
-          message: `✅ Changed theme to: ${value}`,
-          details: `Theme has been applied successfully.`
-        };
-      }
-    }
-    
-    // Search engine setting
-    if (setting === 'search_engine' || setting === 'searchEngine') {
-      const searchEngines = {
-        'brave': 'https://search.brave.com/search?q=',
-        'duckduckgo': 'https://duckduckgo.com/?q=',
-        'google': 'https://www.google.com/search?q=',
-        'bing': 'https://www.bing.com/search?q=',
-        'startpage': 'https://www.startpage.com/search?q=',
-        'qwant': 'https://www.qwant.com/?q='
-      };
-      
-      const engineUrl = searchEngines[value.toLowerCase()];
-      if (!engineUrl) {
-        return {
-          success: false,
-          message: `❌ Unknown search engine: ${value}`,
-          details: `Available: ${Object.keys(searchEngines).join(', ')}`
-        };
-      }
-      
-      localStorage.setItem('nOS_searchEngine', engineUrl);
-      return {
-        success: true,
-        message: `✅ Changed search engine to: ${value}`,
-        details: `Default search engine updated.`
-      };
-    }
-    
-    // Boolean settings (use12Hour, showSeconds, showDesktopIcons, showWhatsNew)
-    const booleanSettings = {
-      'use12Hour': 'nOS_use12Hour',
-      'showSeconds': 'nOS_showSeconds',
-      'showDesktopIcons': 'nOS_showDesktopIcons',
-      'showWhatsNew': 'nautilusOS_showWhatsNew'
-    };
-    
-    if (booleanSettings[setting]) {
-      const boolValue = value === 'true' || value === true;
-      localStorage.setItem(booleanSettings[setting], boolValue.toString());
-      
-      // Apply changes immediately
-      if (setting === 'showDesktopIcons') {
-        const icons = document.getElementById('desktopIcons');
-        if (icons) {
-          icons.style.display = boolValue ? 'grid' : 'none';
-        }
-      }
-      
-      return {
-        success: true,
-        message: `✅ Changed ${setting} to: ${boolValue}`,
-        details: `Setting updated. Some changes may require reopening apps.`
-      };
-    }
-    
-    // Wisp URL setting
-    if (setting === 'wispUrl' || setting === 'wisp_url') {
-      localStorage.setItem('nOS_wispUrl', value);
-      return {
-        success: true,
-        message: `✅ Changed Wisp URL to: ${value}`,
-        details: `Proxy configuration updated.`
-      };
-    }
-    
-    // Bare URL setting
-    if (setting === 'bareUrl' || setting === 'bare_url') {
-      localStorage.setItem('nOS_bareUrl', value);
-      return {
-        success: true,
-        message: `✅ Changed Bare URL to: ${value}`,
-        details: `Proxy configuration updated.`
-      };
-    }
-    
-    return { 
-      success: false, 
-      message: `❌ Unknown setting: ${setting}`,
-      details: `Use get_available_options with category 'settings' to see all available settings.`
-    };
-  } catch (error) {
-    return {
-      success: false,
-      message: `❌ Failed to change setting: ${error.message}`,
-      details: error.message
-    };
-  }
-}
-
-function executeTool_ListApps(params) {
-  const apps = Object.keys(appMetadata).map(key => {
-    const app = appMetadata[key];
-    return `${app.name} (${app.preinstalled ? 'preinstalled' : 'installed'})`;
-  }).join(', ');
-  
-  return { 
-    success: true, 
-    message: `✅ Listed all applications`,
-    details: `Available apps: ${apps}`
-  };
-}
-
-function executeTool_ListFiles(params) {
-  const { path = '/' } = params;
-  
-  try {
-    const parts = path.split('/').filter(p => p);
-    let currentLevel = fileSystem;
-    
-    for (const part of parts) {
-      if (!currentLevel[part]) {
-        throw new Error('Path not found');
-      }
-      currentLevel = currentLevel[part].children;
-    }
-    
-    const items = Object.keys(currentLevel).map(name => {
-      const item = currentLevel[name];
-      return `${name} (${item.type})`;
-    }).join(', ');
-    
-    return { 
-      success: true, 
-      message: `✅ Listed contents of ${path}`,
-      details: `Contents: ${items || '(empty)'}`
-    };
-  } catch (error) {
-    return { 
-      success: false, 
-      message: `❌ Failed to list files: ${error.message}`,
-      details: error.message
-    };
-  }
-}
-
-function executeTool_GetSystemInfo(params) {
-  const username = localStorage.getItem('nOS_username') || 'user';
-  const openWindows = document.querySelectorAll('.window').length;
-  const theme = localStorage.getItem('nOS_selectedTheme') || 'default';
-  
-  const info = {
-    username,
-    openWindows,
-    theme,
-    browser: navigator.userAgent.split(' ').pop(),
-    timestamp: new Date().toLocaleString()
-  };
-  
-  return { 
-    success: true, 
-    message: `✅ Retrieved system information`,
-    details: `User: ${info.username}\nOpen windows: ${info.openWindows}\nTheme: ${info.theme}\nBrowser: ${info.browser}\nTime: ${info.timestamp}`
-  };
-}
-
-function executeTool_GetAvailableOptions(params) {
-  const { category = 'all' } = params;
-  
-  const options = {
-    themes: {
-      installed: ['dark', ...installedThemes],
-      available: ['dark', 'light', 'blue', 'red', 'purple', 'golden', 'green', 'liquidGlass'],
-      current: localStorage.getItem('nOS_selectedTheme') || 'dark',
-      description: 'Available color themes for NautilusOS. Themes must be installed from App Store before use.'
-    },
-    
-    search_engines: {
-      available: ['brave', 'duckduckgo', 'google', 'bing', 'startpage', 'qwant'],
-      current: localStorage.getItem('nOS_searchEngine') || 'https://search.brave.com/search?q=',
-      description: 'Available search engines for the browser'
-    },
-    
-    settings: {
-      boolean: {
-        use12Hour: {
-          current: localStorage.getItem('nOS_use12Hour') === 'true',
-          description: 'Use 12-hour time format (true/false)',
-          values: ['true', 'false']
-        },
-        showSeconds: {
-          current: localStorage.getItem('nOS_showSeconds') === 'true',
-          description: 'Show seconds in taskbar clock (true/false)',
-          values: ['true', 'false']
-        },
-        showDesktopIcons: {
-          current: localStorage.getItem('nOS_showDesktopIcons') !== 'false',
-          description: 'Show icons on desktop (true/false)',
-          values: ['true', 'false']
-        },
-        showWhatsNew: {
-          current: localStorage.getItem('nautilusOS_showWhatsNew') !== 'false',
-          description: 'Show What\'s New on startup (true/false)',
-          values: ['true', 'false']
-        }
-      },
-      urls: {
-        wispUrl: {
-          current: localStorage.getItem('nOS_wispUrl') || 'wss://webmath.help/wisp/',
-          description: 'Wisp proxy URL for browser'
-        },
-        bareUrl: {
-          current: localStorage.getItem('nOS_bareUrl') || 'https://useclassplay.vercel.app/fq/',
-          description: 'Bare proxy URL for browser'
-        }
-      },
-      description: 'System settings that can be changed'
-    },
-    
-    apps: {
-      available: Object.keys(appMetadata).map(key => ({
-        id: key,
-        name: appMetadata[key].name,
-        preinstalled: appMetadata[key].preinstalled
-      })),
-      description: 'All available applications in NautilusOS'
-    }
-  };
-  
-  let result = '';
-  
-  if (category === 'all') {
-    result = JSON.stringify(options, null, 2);
-  } else if (category === 'themes') {
-    result = `THEMES:\n` +
-            `Installed: ${options.themes.installed.join(', ')}\n` +
-            `Available to install: ${options.themes.available.filter(t => !options.themes.installed.includes(t)).join(', ')}\n` +
-            `Current: ${options.themes.current}\n` +
-            `Note: To use a theme, it must first be installed from the App Store.`;
-  } else if (category === 'search_engines') {
-    result = `SEARCH ENGINES:\n` +
-            `Available: ${options.search_engines.available.join(', ')}\n` +
-            `Current: ${options.search_engines.current}`;
-  } else if (category === 'settings') {
-    result = `SETTINGS:\n\n` +
-            `Boolean Settings:\n`;
-    for (const [key, val] of Object.entries(options.settings.boolean)) {
-      result += `  ${key}: ${val.description}\n    Current: ${val.current}\n    Values: ${val.values.join(', ')}\n`;
-    }
-    result += `\nURL Settings:\n`;
-    for (const [key, val] of Object.entries(options.settings.urls)) {
-      result += `  ${key}: ${val.description}\n    Current: ${val.current}\n`;
-    }
-  } else if (category === 'apps') {
-    result = `APPS (${options.apps.available.length} total):\n`;
-    options.apps.available.forEach(app => {
-      result += `  ${app.id}: ${app.name} (${app.preinstalled ? 'preinstalled' : 'installed'})\n`;
-    });
-  } else {
-    return {
-      success: false,
-      message: `❌ Unknown category: ${category}`,
-      details: `Valid categories: themes, apps, search_engines, settings, all`
-    };
-  }
-  
-  return {
-    success: true,
-    message: `✅ Retrieved available options for: ${category}`,
-    details: result
-  };
-}
-
-function logAction(action, details) {
-  const timestamp = new Date().toISOString();
-  nautilusAI.actionLog.push({ timestamp, action, details });
-  console.log(`[AI Action] ${action}`, details);
-}
-
-function showToolApprovalDialog(toolCall, onApprove, onReject) {
-  const { tool, parameters } = toolCall;
-  const toolDef = OS_AUTOMATION_TOOLS[tool];
-  
-  const modal = document.createElement('div');
-  modal.style.cssText = `
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.8);
-    backdrop-filter: blur(10px);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 999999;
-    animation: fadeIn 0.2s ease;
-  `;
-  
-  const dialog = document.createElement('div');
-  dialog.style.cssText = `
-    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-    border: 2px solid rgba(125, 211, 192, 0.3);
-    border-radius: 16px;
-    padding: 24px;
-    max-width: 500px;
-    width: 90%;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
-    animation: slideUp 0.3s ease;
-  `;
-  
-  dialog.innerHTML = `
-    <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 20px;">
-      <div style="width: 48px; height: 48px; background: rgba(125, 211, 192, 0.2); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
-        <i class="fas fa-robot" style="color: var(--accent); font-size: 24px;"></i>
-      </div>
-      <div>
-        <h3 style="margin: 0; color: var(--text-primary); font-size: 18px;">AI Action Approval Required</h3>
-        <p style="margin: 4px 0 0 0; color: var(--text-secondary); font-size: 12px;">The AI wants to perform an action</p>
-      </div>
-    </div>
-    
-    <div style="background: rgba(125, 211, 192, 0.1); border: 1px solid rgba(125, 211, 192, 0.2); border-radius: 10px; padding: 16px; margin-bottom: 20px;">
-      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
-        <i class="fas fa-bolt" style="color: var(--accent);"></i>
-        <strong style="color: var(--accent);">Action: ${tool}</strong>
-      </div>
-      <div style="color: var(--text-secondary); font-size: 13px; line-height: 1.6;">
-        ${toolDef ? toolDef.description : 'Execute operation'}
-      </div>
-    </div>
-    
-    <div style="background: rgba(30, 41, 59, 0.6); border-radius: 8px; padding: 12px; margin-bottom: 20px;">
-      <div style="color: var(--text-secondary); font-size: 12px; font-weight: bold; margin-bottom: 8px;">Parameters:</div>
-      <div style="color: var(--text-primary); font-size: 13px; font-family: 'SUSE Mono', monospace;">
-        ${Object.entries(parameters).map(([key, value]) => 
-          `<div style="margin: 4px 0;"><span style="color: var(--accent);">${key}:</span> ${value}</div>`
-        ).join('')}
-      </div>
-    </div>
-    
-    <div style="display: flex; gap: 12px;">
-      <button id="rejectToolBtn" style="flex: 1; padding: 12px; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; color: #ef4444; font-size: 14px; font-weight: bold; cursor: pointer; transition: all 0.2s;">
-        <i class="fas fa-times"></i> Reject
-      </button>
-      <button id="approveToolBtn" style="flex: 2; padding: 12px; background: linear-gradient(135deg, var(--accent), var(--accent-hover)); border: none; border-radius: 8px; color: #0f172a; font-size: 14px; font-weight: bold; cursor: pointer; transition: all 0.2s;">
-        <i class="fas fa-check"></i> Approve & Execute
-      </button>
-    </div>
-  `;
-  
-  modal.appendChild(dialog);
-  document.body.appendChild(modal);
-  
-  document.getElementById('approveToolBtn').onclick = () => {
-    modal.remove();
-    onApprove();
-  };
-  
-  document.getElementById('rejectToolBtn').onclick = () => {
-    modal.remove();
-    onReject();
-  };
-  
-  // Add animations
-  const style = document.createElement('style');
-  style.textContent = `
-    @keyframes fadeIn {
-      from { opacity: 0; }
-      to { opacity: 1; }
-    }
-    @keyframes slideUp {
-      from { transform: translateY(30px); opacity: 0; }
-      to { transform: translateY(0); opacity: 1; }
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-function addToolFeedbackToChat(toolCall, result) {
-  const chatContainer = document.getElementById('aiChatMessages');
-  if (!chatContainer) return;
-  
-  const feedbackDiv = document.createElement('div');
-  feedbackDiv.style.cssText = `
-    background: ${result.success ? 'rgba(125, 211, 192, 0.15)' : 'rgba(239, 68, 68, 0.15)'};
-    border: 1px solid ${result.success ? 'rgba(125, 211, 192, 0.4)' : 'rgba(239, 68, 68, 0.4)'};
-    border-radius: 10px;
-    padding: 15px;
-    margin: 10px 0;
-    animation: slideIn 0.3s ease-out;
-  `;
-  
-  feedbackDiv.innerHTML = `
-    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-      <i class="fas fa-cog" style="color: ${result.success ? 'var(--accent)' : '#ef4444'}; font-size: 16px;"></i>
-      <strong style="color: ${result.success ? 'var(--accent)' : '#ef4444'};">Action Result</strong>
-    </div>
-    <div style="color: #cbd5e1; font-size: 13px; line-height: 1.6;">
-      <div style="margin-bottom: 6px;">${result.message}</div>
-      ${result.details ? `<div style="color: #94a3b8; font-size: 12px; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(125, 211, 192, 0.2);">${result.details}</div>` : ''}
-    </div>
-  `;
-  
-  chatContainer.appendChild(feedbackDiv);
-  chatContainer.scrollTop = chatContainer.scrollHeight;
-}
-
-// Note: Initialization happens in openApp when nautilus-ai is opened
-
-// Handle Enter key in textarea
-document.addEventListener('keydown', (e) => {
-  const aiInput = document.getElementById('aiInput');
-  if (e.target === aiInput && e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    sendAiMessage();
-  }
-  
-  // Auto-resize textarea
-  if (e.target === aiInput) {
-    setTimeout(() => {
-      aiInput.style.height = 'auto';
-      aiInput.style.height = Math.min(aiInput.scrollHeight, 150) + 'px';
-    }, 0);
-  }
-});
-
-document.addEventListener('DOMContentLoaded', function() {
-    let hoverTimeout;
-    
-    document.addEventListener('mouseover', function(e) {
-        const desktopIcon = e.target.closest('.desktop-icon');
-        if (desktopIcon) {
-            const span = desktopIcon.querySelector('span');
-            if (span) {
-                hoverTimeout = setTimeout(() => {
-                    span.classList.add('expanded');
-                }, 1200);
-            }
-        }
-    });
-    
-    document.addEventListener('mouseout', function(e) {
-        const desktopIcon = e.target.closest('.desktop-icon');
-        if (desktopIcon) {
-            const span = desktopIcon.querySelector('span');
-            if (span) {
-                clearTimeout(hoverTimeout);
-                span.classList.remove('expanded');
-            }
-        }
-    });
-});
