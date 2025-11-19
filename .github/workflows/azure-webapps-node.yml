@@ -1,5 +1,5 @@
 # Stage changes
-git add .
+git add 
 
 # Commit
 git commit -m "Deploy NautilusOS-OneFile to GitHub Pages"
